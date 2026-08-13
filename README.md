@@ -33,6 +33,9 @@ lighting; it proves renderer stages rather than visual polish.
 - Basic entity shaders: `gbuffers_entities.vsh/fsh` runs for the normal Minecraft
   `pipeline/entity_*` quad family, with the vanilla transform, fog, lighting, `Sampler0`, and
   `Sampler2` ABI. Unsupported entity pipeline families fall back safely to vanilla.
+- Release harness: checked-in diagnostic acceptance packs, an explicit development-client sync
+  task, and a fixed-scene benchmark protocol. These measure regressions; they do not make a
+  performance claim against other renderers.
 
 ### Known boundaries
 
@@ -87,4 +90,4 @@ Apply. Selecting the active pack again reloads it; closing pack settings reloads
 
 The build runs 73 backend-neutral tests plus three Fabric compiler/bridge tests. See
 `docs/BUILDING.md`, `docs/ARCHITECTURE_AUDIT.md`, `docs/LIVE_RENDER_VALIDATION.md`, and
-`HANDOFF.md` for engineering detail and current handoff state.
+`docs/BENCHMARKS.md` for engineering detail, live validation, and performance protocol.

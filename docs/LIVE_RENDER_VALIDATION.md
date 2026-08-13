@@ -35,6 +35,11 @@ Validated on 2026-08-13 with Minecraft 26.2, Fabric Loader 0.19.3, Fabric API
     gbuffers_entities`, and a newly spawned pig rendered with the pack's intentional warm-tint
     probe. The Creative world stayed stable with the entity visible, confirming the standard
     entity ABI, sampler binding, scene attachment, and pipeline replacement path.
+11. Gate 0 added a tracked copy of the terrain-shadow/entity probe and verified that
+    `:retina-fabric:syncAcceptancePacks` materializes all eight shader stages into the ignored
+    Fabric development-client shader-pack directory. The targeted Fabric test suite remained
+    green. `docs/BENCHMARKS.md` now defines the controlled Creative-world setup and metrics;
+    no performance sample has been recorded yet.
 
 ## Bugs found by the world tests
 
