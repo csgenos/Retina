@@ -58,6 +58,11 @@ final class TerrainPackCompilerTest {
         for (PreparedTerrainPack.Program program : result.programs().values()) {
             assertTrue(program.vertexSource().contains("retina_init_sodium_vertex();"));
             assertTrue(program.vertexSource().contains("a_RetinaNormal"));
+            assertTrue(program.vertexSource().contains("RetinaSodiumDrawConstants"),
+                "the terrain adapter must preserve Sodium's exact 20-byte push-constant ABI");
+            assertTrue(program.vertexSource().contains("u_RegionID"));
+            assertTrue(!program.vertexSource().contains("entityColor"),
+                "Retina's generic push constants must not overlap Sodium terrain draws");
             assertTrue(program.fragmentSource().contains("u_BlockTex"));
         }
     }

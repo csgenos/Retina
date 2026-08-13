@@ -186,6 +186,27 @@ class TranslationCompilesTest {
     }
 
     @Test
+    @DisplayName("legacy shadow2DLod keeps its vec4 return contract")
+    void shadow2DLodCompiles() {
+        String source = """
+            #version 120
+            uniform sampler2DShadow shadowtex0;
+            varying vec2 texcoord;
+            void main() {
+                float visibility = shadow2DLod(shadowtex0, vec3(texcoord, 0.5), 0.0).r;
+                gl_FragData[0] = vec4(visibility);
+            }
+            """;
+        TranslatedSource translated = translate(source,
+            new VulkanTranslator.Options(ShaderStage.FRAGMENT,
+                DrawBuffersDirective.defaultTargets(), AlphaTest.ALWAYS, false, 450));
+
+        assertTrue(translated.text().contains("retina_shadow2DLod"),
+            () -> "expected the compatibility wrapper, got:\n" + translated.text());
+        compile(translated, ShaderStage.FRAGMENT);
+    }
+
+    @Test
     @DisplayName("texture2D inside comments and identifiers is not rewritten")
     void rewritingIsTokenAccurate() {
         String source = """
