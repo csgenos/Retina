@@ -154,6 +154,16 @@ entity/block-entity shadow draws` with no Retina, Mixin, pipeline, or Vulkan err
 the standard entity path; a chest probe remains a coverage candidate, not evidence that every
 block-entity ABI is supported.
 
+Post-Gate-2 validation found no draw-time Vulkan validation errors for the test scene. The visible
+black circle under the pig was instead vanilla's `pipeline/entity_shadow` decal being incorrectly
+routed through Retina's opaque entity pipeline. It is now excluded from both entity replacement
+and caster capture, preserving vanilla's translucent decal. The lighting reference entity shader
+also now computes eye-space fog distance and applies the terrain fog model, so distant entities no
+longer punch through fog. The validation layer reports 17 leaked Vulkan objects on client shutdown;
+that lifecycle issue remains recorded for a later stability pass. Underwater attenuation, water
+surface compositing, and its desired chunk-loading presentation are later effects/stage work, not
+Gate 0–2 terrain or standard-entity ABI work.
+
 1. **Dedicated block entities and player/hand.** Add separately validated vertex/bind-group
    paths before claiming coverage for non-standard block entities, armor, items, eyes, or the
    player hand. Preserve the current safe exclusion for mod-defined formats.

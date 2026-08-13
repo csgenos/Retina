@@ -53,6 +53,13 @@ Validated on 2026-08-13 with Minecraft 26.2, Fabric Loader 0.19.3, Fabric API
     `Recorded 1 standard entity/block-entity shadow draws`. No Retina, Mixin, pipeline, or
     Vulkan error followed. A nearby chest was placed as a future block-entity coverage probe;
     the one verified replay is intentionally recorded as standard-entity ABI coverage only.
+14. Validation-layer testing reproduced a black circular decal below a pig. The log contained no
+    draw-time descriptor or push-constant validation error. Source inspection identified the
+    decal as vanilla's blended `pipeline/entity_shadow`, which must not use Retina's opaque
+    `gbuffers_entities` pipeline. The reference entity program was also updated to apply the
+    same fog model as terrain. The next validation-layer client restart activated the corrected
+    lighting-reference pack successfully with zero compiler diagnostics; a final in-world visual
+    confirmation remains the next manual check.
 
 ## Bugs found by the world tests
 

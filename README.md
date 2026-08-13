@@ -42,6 +42,9 @@ lighting; it proves renderer stages rather than visual polish.
   transform UBO, and atlas binding, then replays compatible `pipeline/entity_*` draws into the
   terrain shadow map with alpha testing. This also covers a block entity when its renderer uses
   that same standard ABI; it does not claim support for custom block-entity formats.
+- The lighting reference entity program applies the same distance fog as terrain. Vanilla's
+  projected entity-shadow decal stays on its own translucent pipeline, avoiding an opaque black
+  disk beneath entities.
 - Release harness: checked-in diagnostic acceptance packs, an explicit development-client sync
   task, and a fixed-scene benchmark protocol. These measure regressions; they do not make a
   performance claim against other renderers.
@@ -54,6 +57,9 @@ lighting; it proves renderer stages rather than visual polish.
 - Entity, block-entity, player/hand, and mod-defined pipelines are not all specialized. Shadow
   casting is intentionally limited to the standard entity quad ABI; armor, eyes, items, player
   hand, custom block entities, and mod-defined formats remain excluded.
+- Underwater medium effects are not implemented yet. Terrain culling still uses Minecraft/Sodium
+  fog distances, but Retina does not yet add Iris-style underwater scene attenuation or water
+  surface compositing.
 - Deferred, `prepare`, `setup`, `shadowcomp`, compute/SSBO, geometry/tessellation, custom pack
   textures/images, resource-pack texture access, dimensions, Distant Horizons, and most of the
   Iris `shaders.properties` expression ecosystem are not live yet.

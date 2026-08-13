@@ -637,7 +637,10 @@ public final class ShaderRuntime {
             return original;
         }
         String path = original.getLocation().getPath();
-        if (!path.startsWith("pipeline/entity_")) {
+        // Vanilla's projected entity-shadow decal is an alpha-blended screen-space effect. It
+        // is not an entity mesh and must keep its own translucent pipeline; routing it through
+        // gbuffers_entities makes the decal an opaque black disk.
+        if (!path.startsWith("pipeline/entity_") || path.equals("pipeline/entity_shadow")) {
             return original;
         }
         if (!loggedEntityRouting) {
@@ -704,7 +707,8 @@ public final class ShaderRuntime {
     private static boolean isEntityPipeline(RenderPipeline pipeline) {
         return pipeline.getVertexFormatBinding(0) == DefaultVertexFormat.ENTITY
             && pipeline.getPrimitiveTopology() == PrimitiveTopology.QUADS
-            && pipeline.getLocation().getPath().startsWith("pipeline/entity_");
+            && pipeline.getLocation().getPath().startsWith("pipeline/entity_")
+            && !pipeline.getLocation().getPath().equals("pipeline/entity_shadow");
     }
 
     /**

@@ -83,7 +83,12 @@ public final class EntityShaderAdapter {
             .replace("retina_ModelViewMatrix", "ModelViewMat")
             .replace("retina_ProjectionMatrixInverse", "inverse(ProjMat)")
             .replace("retina_ProjectionMatrix", "ProjMat")
-            .replace("retina_NormalMatrix", "mat3(ModelViewMat)");
+            .replace("retina_NormalMatrix", "mat3(ModelViewMat)")
+            // Entity programs use Minecraft's existing Fog bind group rather than Retina's
+            // terrain UBO. Preserve the common legacy names against that native ABI.
+            .replace("fogColor", "FogColor.rgb")
+            .replace("fogStart", "FogEnvironmentalStart")
+            .replace("fogEnd", "FogEnvironmentalEnd");
         if (!vertex) {
             return source;
         }
