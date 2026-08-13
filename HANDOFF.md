@@ -1,8 +1,22 @@
 # Retina handoff
 
-Current as of 2026-08-13. The Minecraft 26.2/Fabric/Sodium terrain MRT, shadow, and
-composite/final renderer is implemented, built, and exercised in a live world. `README.md`
-defines the supported pack surface and `docs/LIVE_RENDER_VALIDATION.md` records the live test.
+Current as of 2026-08-13. Retina is an independently implemented, Vulkan-native renderer whose
+long-term target is Iris-comparable feature breadth, quality, and stability—not an Iris clone
+or a promise of drop-in Iris-pack compatibility. Its Minecraft 26.2/Fabric/Sodium terrain MRT,
+shadow, composite/final, scene-routing, and first `gbuffers_entities` path are implemented,
+built, and exercised in a live Creative world. `README.md` defines the public feature and
+compatibility surface; `docs/LIVE_RENDER_VALIDATION.md` records the live tests.
+
+## Handoff rule
+
+Every completed renderer feature must update both `README.md` and this file in the same change:
+
+- `README.md`: user-facing feature status, compatibility boundaries, and roadmap.
+- `HANDOFF.md`: implementation detail, proven validation, known limits, and the next concrete
+  engineering slice.
+
+Do not describe scene routing as dedicated program support, or terrain shadows as entity shadow
+support. Unsupported stages must remain explicit rather than silently falling back.
 
 ## Architecture
 
@@ -101,6 +115,27 @@ deferred/prepare/setup passes. The backend-neutral core models more of that cont
 dedicated programs are not yet connected to live Minecraft render stages. Add new stages
 transactionally and keep unsupported features as explicit diagnostics rather than silently
 changing pack semantics.
+
+## Next roadmap
+
+1. **Lighting reference pack.** Add a maintainable acceptance/reference pack that combines
+   lightmap input, fog, day/night/sun direction, and terrain-shadow sampling. The current pack
+   intentionally proves the shadow data path but looks fullbright because it does not model the
+   vanilla lighting stack.
+2. **Entity shadow casters.** Record/replay compatible entity draw data from the standard
+   entity pipeline into the shadow pass. Keep non-standard entity, armor, item, eye, and mod
+   pipelines on the fallback path until their vertex and bind-group ABIs are independently
+   validated. Then repeat for block entities and player/hand rendering.
+3. **Dedicated scene stages.** Move from scene-target preservation to real shader-pack stages
+   for block entities, particles, weather, clouds, sky, and effects, each with declared ordering
+   and a separate compatibility boundary.
+4. **Pipeline breadth.** Connect `prepare`, `deferred`, `setup`, and `shadowcomp`; expand
+   ping-pong, target scaling/resizing, and attachment behavior only with live GPU tests.
+5. **Resources and ecosystem.** Add pack textures/images/samplers, resource-pack texture
+   access, Retina's own broad uniform/expression/material/entity contracts, dimensions, mod
+   compatibility, and finally compute/SSBO/geometry/tessellation and Distant Horizons. Adopt
+   useful legacy shader conventions selectively; do not frame this as an Iris clone or promise
+   drop-in compatibility.
 
 ## Invariants to preserve
 
