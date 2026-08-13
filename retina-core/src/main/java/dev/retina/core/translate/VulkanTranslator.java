@@ -669,16 +669,16 @@ public final class VulkanTranslator {
                 continue;
             }
 
-            String replacement = GlslTypes.LEGACY_TEXTURE_FUNCTIONS.get(name);
-            if (replacement != null && isCallPosition(tokens, i)) {
-                tokens.set(i, token.withText(replacement));
-                continue;
-            }
             if (GlslTypes.SHADOW_VEC4_FUNCTIONS.contains(name) && isCallPosition(tokens, i)) {
                 // Wrapped rather than renamed: `texture()` on a shadow sampler yields a float
                 // whereas `shadow2D()` yielded a vec4, and packs index the result.
                 tokens.set(i, token.withText("retina_" + name));
                 collected.usedBuiltins.add("retina_" + name);
+                continue;
+            }
+            String replacement = GlslTypes.LEGACY_TEXTURE_FUNCTIONS.get(name);
+            if (replacement != null && isCallPosition(tokens, i)) {
+                tokens.set(i, token.withText(replacement));
                 continue;
             }
 
@@ -994,6 +994,22 @@ public final class VulkanTranslator {
         if (collected.usedBuiltins.contains("retina_shadow2DProj")) {
             out.append("vec4 retina_shadow2DProj(sampler2DShadow s, vec4 c) {"
                 + " return vec4(textureProj(s, c)); }\n");
+        }
+        if (collected.usedBuiltins.contains("retina_shadow2DLod")) {
+            out.append("vec4 retina_shadow2DLod(sampler2DShadow s, vec3 c, float l) {"
+                + " return vec4(textureLod(s, c, l)); }\n");
+        }
+        if (collected.usedBuiltins.contains("retina_shadow2DProjLod")) {
+            out.append("vec4 retina_shadow2DProjLod(sampler2DShadow s, vec4 c, float l) {"
+                + " return vec4(textureProjLod(s, c, l)); }\n");
+        }
+        if (collected.usedBuiltins.contains("retina_shadow1D")) {
+            out.append("vec4 retina_shadow1D(sampler1DShadow s, vec3 c) {"
+                + " return vec4(texture(s, c)); }\n");
+        }
+        if (collected.usedBuiltins.contains("retina_shadow1DLod")) {
+            out.append("vec4 retina_shadow1DLod(sampler1DShadow s, vec3 c, float l) {"
+                + " return vec4(textureLod(s, c, l)); }\n");
         }
         if (collected.usedBuiltins.contains("ftransform")) {
             out.append("vec4 ftransform() {"

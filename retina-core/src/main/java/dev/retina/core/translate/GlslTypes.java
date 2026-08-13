@@ -103,11 +103,7 @@ public final class GlslTypes {
         Map.entry("texture3DGrad", "textureGrad"),
         Map.entry("textureCube", "texture"),
         Map.entry("textureCubeLod", "textureLod"),
-        Map.entry("textureCubeGrad", "textureGrad"),
-        Map.entry("shadow2DLod", "textureLod"),
-        Map.entry("shadow2DProjLod", "textureProjLod"),
-        Map.entry("shadow1D", "texture"),
-        Map.entry("shadow1DLod", "textureLod")
+        Map.entry("textureCubeGrad", "textureGrad")
     );
 
     /**
@@ -117,6 +113,7 @@ public final class GlslTypes {
      * compiling; see {@code RETINA_SHADOW_COMPAT} in the generated prologue.
      */
     public static final Set<String> SHADOW_VEC4_FUNCTIONS = Set.of(
-        "shadow2D", "shadow2DProj"
+        "shadow2D", "shadow2DProj", "shadow2DLod", "shadow2DProjLod",
+        "shadow1D", "shadow1DLod"
     );
 }

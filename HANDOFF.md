@@ -53,6 +53,12 @@ The extended 24-byte terrain vertex format is always used, including with shader
 makes pack toggles safe without rebuilding chunk meshes; Sodium ignores the extra four bytes
 on its normal pipeline.
 
+The generic core translator preserves legacy `shadow2D*` lookups as `vec4`-returning wrappers,
+including `shadow2DLod` and projected LOD variants. Before a terrain shader reaches the live
+Sodium path, `TerrainShaderAdapter` replaces Retina's generic per-draw block with Sodium's exact
+20-byte `u_RegionOffset`/time/region-id push-constant ABI. Do not reintroduce Retina draw members
+there: Sodium owns that range for terrain submission.
+
 ## Proven state
 
 Run from the repository root with JDK 25:
@@ -61,7 +67,7 @@ Run from the repository root with JDK 25:
 .\gradlew.bat build --rerun-tasks --no-daemon
 ```
 
-The current build passes 76 tests with zero failures: 73 backend-neutral pack, preprocessing,
+The current build passes 77 tests with zero failures: 74 backend-neutral pack, preprocessing,
 translation, SPIR-V, render-graph, material, option, and safety tests plus three Fabric tests
 that compile real GLSL 120 terrain and MRT/composite/final packs through shaderc and enforce
 the live attachment limit.

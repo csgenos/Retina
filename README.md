@@ -18,7 +18,8 @@ lighting; it proves renderer stages rather than visual polish.
 
 - Sodium terrain: solid, cutout, translucent, historical fallback resolution, real packed
   face normals, `gtexture`/`texture`, `lightmap`, terrain matrices/state, and Sodium's region
-  push-constant ABI.
+  push-constant ABI. Legacy `shadow2D*` compatibility lookups, including explicit-LOD forms,
+  retain their legacy `vec4` result contract during translation.
 - Render targets: up to eight simultaneous outputs selected from `colortex0..15`, double
   buffering, clear/color/format directives, mipmaps, flips, custom target size, pass scale,
   resize-safe retirement, and standard RGBA8/RGBA16F live targets.
@@ -95,6 +96,6 @@ Apply. Selecting the active pack again reloads it; closing pack settings reloads
 ./gradlew build
 ```
 
-The build runs 73 backend-neutral tests plus three Fabric compiler/bridge tests. See
+The build runs 74 backend-neutral tests plus three Fabric compiler/bridge tests. See
 `docs/BUILDING.md`, `docs/ARCHITECTURE_AUDIT.md`, `docs/LIVE_RENDER_VALIDATION.md`, and
 `docs/BENCHMARKS.md` for engineering detail, live validation, and performance protocol.
