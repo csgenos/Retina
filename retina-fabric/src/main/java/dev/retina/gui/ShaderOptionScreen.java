@@ -9,7 +9,7 @@ import dev.retina.RetinaClient;
 import dev.retina.core.option.OptionValues;
 import dev.retina.core.option.PackOption;
 import dev.retina.pipeline.PackManager;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -133,11 +133,12 @@ public final class ShaderOptionScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        super.render(graphics, mouseX, mouseY, partialTick);
-        graphics.drawCenteredString(font, title, width / 2, 12, 0xFFFFFF);
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                                   float partialTick) {
+        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+        graphics.centeredText(font, title, width / 2, 12, 0xFFFFFF);
         if (!details.diagnostics().isEmpty()) {
-            graphics.drawCenteredString(font,
+            graphics.centeredText(font,
                 Component.translatable("retina.warning.unknownDirective",
                     details.diagnostics().size()),
                 width / 2, height - 68, 0xFFAA00);
@@ -154,6 +155,9 @@ public final class ShaderOptionScreen extends Screen {
             org.slf4j.LoggerFactory.getLogger("Retina/Packs")
                 .warn("Could not save options for {}: {}", details.name(), e.getMessage());
         }
-        minecraft.setScreen(parent);
+        if (details.name().equals(RetinaClient.config().selectedPack())) {
+            RetinaClient.reloadShaders();
+        }
+        minecraft.setScreenAndShow(parent);
     }
 }

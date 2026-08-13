@@ -8,11 +8,13 @@ package dev.retina.gui;
 import dev.retina.RetinaClient;
 import dev.retina.config.RetinaConfig;
 import dev.retina.pipeline.PackManager;
-import net.minecraft.client.gui.GuiGraphics;
+import dev.retina.render.ShaderRuntime;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
 
@@ -91,9 +93,12 @@ public final class ShaderPackScreen extends Screen {
 
     private void updateButtons() {
         boolean packSelected = selected != null && !selected.isEmpty();
+        boolean same = java.util.Objects.equals(selected,
+            RetinaClient.config().selectedPack());
         settingsButton.active = packSelected;
-        applyButton.active = !java.util.Objects.equals(
-            selected, RetinaClient.config().selectedPack());
+        applyButton.active = packSelected || !same;
+        applyButton.setMessage(Component.translatable(same && packSelected
+            ? "retina.screen.packs.reload" : "retina.screen.packs.apply"));
     }
 
     private void openSettings() {
@@ -101,7 +106,7 @@ public final class ShaderPackScreen extends Screen {
             return;
         }
         packManager.inspect(selected).ifPresent(details ->
-            minecraft.setScreen(new ShaderOptionScreen(this, details)));
+            minecraft.setScreenAndShow(new ShaderOptionScreen(this, details)));
     }
 
     /**
@@ -115,24 +120,30 @@ public final class ShaderPackScreen extends Screen {
         RetinaConfig next = RetinaClient.config().withSelectedPack(
             selected == null ? RetinaConfig.SHADERS_OFF : selected);
         RetinaClient.setConfig(next);
-        status = next.shadersEnabled()
-            ? Component.translatable("retina.status.applied", next.selectedPack()).getString()
-            : Component.translatable("retina.status.disabled").getString();
+        // Compilation is asynchronous. Let the renderer's live status replace any prior
+        // pack-discovery error instead of claiming success before the GPU pipeline swaps.
+        status = "";
         updateButtons();
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        super.render(graphics, mouseX, mouseY, partialTick);
-        graphics.drawCenteredString(font, title, width / 2, 12, 0xFFFFFF);
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                                   float partialTick) {
+        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+        graphics.centeredText(font, title, width / 2, 12, 0xFFFFFF);
         if (!status.isEmpty()) {
-            graphics.drawCenteredString(font, status, width / 2, height - 66, 0xA0A0A0);
+            graphics.centeredText(font, status, width / 2, height - 66, 0xA0A0A0);
+        } else {
+            ShaderRuntime.Status runtime = ShaderRuntime.get().status();
+            int color = runtime.state() == ShaderRuntime.State.FAILED
+                || runtime.state() == ShaderRuntime.State.WRONG_BACKEND ? 0xFF5555 : 0xA0A0A0;
+            graphics.centeredText(font, runtime.detail(), width / 2, height - 66, color);
         }
     }
 
     @Override
     public void onClose() {
-        minecraft.setScreen(parent);
+        minecraft.setScreenAndShow(parent);
     }
 
     /** The scrollable list of packs, with {@code Shaders: Off} pinned first. */
@@ -176,23 +187,26 @@ public final class ShaderPackScreen extends Screen {
             }
 
             @Override
-            public void render(GuiGraphics graphics, int index, int y, int x, int entryWidth,
-                               int entryHeight, int mouseX, int mouseY, boolean hovered,
-                               float partialTick) {
+            public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                                       boolean hovered, float partialTick) {
                 String label = pack == null
                     ? Component.translatable("retina.screen.packs.off").getString()
                     : pack.displayName();
                 int colour = pack == null || pack.status() == PackManager.PackEntry.Status.READY
                     ? 0xFFFFFF
                     : 0xFF5555;
-                graphics.drawString(font, label, x + 4, y + 3, colour);
+                graphics.text(font, label, getContentX() + 4, getContentY() + 3, colour);
                 if (pack != null && pack.status() != PackManager.PackEntry.Status.READY) {
-                    graphics.drawString(font, pack.detail(), x + 4, y + 13, 0x808080);
+                    graphics.text(font, pack.detail(), getContentX() + 4, getContentY() + 13,
+                        0x808080);
                 }
             }
 
             @Override
-            public boolean mouseClicked(double mouseX, double mouseY, int button) {
+            public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+                if (event.button() != 0) {
+                    return false;
+                }
                 setSelected(this);
                 selected = pack == null ? RetinaConfig.SHADERS_OFF : pack.displayName();
                 updateButtons();

@@ -223,7 +223,8 @@ public final class PackManager {
             java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     }
 
-    private Optional<PackDiscovery.Candidate> findCandidate(String packName) {
+    /** Locates a pack by its UI name for the compilation worker. */
+    public Optional<PackDiscovery.Candidate> findCandidate(String packName) {
         try {
             return discovery.discover().stream()
                 .filter(c -> c.name().equals(packName))

@@ -1,0 +1,11 @@
+Retina
+Copyright (C) 2026 the Retina contributors
+
+Retina is an independent Fabric mod. It does not bundle or redistribute Minecraft,
+Fabric API, Sodium, Iris, or their source code.
+
+Retina depends on Sodium at compile time and runtime. Sodium is distributed separately
+under the PolyForm Shield License 1.0.0. Fabric API is distributed separately under the
+Apache License 2.0. Minecraft is copyright Mojang AB and is not distributed with Retina.
+
+SPDX-License-Identifier: LGPL-3.0-only

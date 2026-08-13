@@ -3,7 +3,7 @@
 // -Pretina.coreOnly=true, which excludes this module; see docs/BUILDING.md.
 
 plugins {
-    id("fabric-loom") version "1.14-SNAPSHOT"
+    id("net.fabricmc.fabric-loom") version "1.17-SNAPSHOT"
     `maven-publish`
 }
 
@@ -11,6 +11,17 @@ val minecraftVersion = providers.gradleProperty("minecraft.version").get()
 val loaderVersion = providers.gradleProperty("loader.version").get()
 val fabricApiVersion = providers.gradleProperty("fabric.api.version").get()
 val sodiumVersion = providers.gradleProperty("sodium.version").get()
+val junitVersion = providers.gradleProperty("junit.version").get()
+val nativeClassifier: String = run {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = System.getProperty("os.arch").lowercase()
+    val arm = arch.startsWith("aarch64") || arch.startsWith("arm")
+    when {
+        os.contains("win") -> if (arm) "natives-windows-arm64" else "natives-windows"
+        os.contains("mac") || os.contains("darwin") -> if (arm) "natives-macos-arm64" else "natives-macos"
+        else -> if (arm) "natives-linux-arm64" else "natives-linux"
+    }
+}
 
 base {
     archivesName = "retina"
@@ -36,27 +47,35 @@ repositories {
 
 dependencies {
     minecraft("com.mojang:minecraft:$minecraftVersion")
-    // Minecraft 26.2 mods are compiled and shipped against Mojang's official names; there is
-    // no intermediary remap step in this toolchain, which is why Sodium's class files
-    // reference net.minecraft.client.renderer.* directly.
-    mappings(loom.officialMojangMappings())
-    modImplementation("net.fabricmc:fabric-loader:$loaderVersion")
-    modImplementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
+    // Minecraft 26.2 ships unobfuscated. The non-remapping Loom plugin compiles directly
+    // against those names; declaring a mappings layer is both unnecessary and invalid.
+    implementation("net.fabricmc:fabric-loader:$loaderVersion")
+    implementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
 
     // Sodium is a hard dependency: Retina drives its terrain pipeline rather than replacing
     // it. It is not embedded, and its Polyform Shield licence forbids redistribution, so it
     // is compile-scoped only.
-    modCompileOnly("maven.modrinth:sodium:$sodiumVersion")
-    modRuntimeOnly("maven.modrinth:sodium:$sodiumVersion")
+    compileOnly("maven.modrinth:sodium:$sodiumVersion")
+    runtimeOnly("maven.modrinth:sodium:$sodiumVersion")
 
     // The backend-neutral runtime, shaded into the mod jar.
     implementation(project(":retina-core"))
     include(project(":retina-core"))
+
+    testImplementation(platform("org.junit:junit-bom:$junitVersion"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testRuntimeOnly("org.lwjgl:lwjgl::$nativeClassifier")
+    testRuntimeOnly("org.lwjgl:lwjgl-shaderc::$nativeClassifier")
 }
 
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
     options.release = providers.gradleProperty("java.version").get().toInt()
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 tasks.processResources {
