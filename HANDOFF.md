@@ -39,8 +39,10 @@ The live bridge works as follows:
    procedural fullscreen triangle and final presents into Minecraft's main target.
 5. `ShadowFramebuffer` owns a D32 map and up to two shadowcolor targets. At the end of world
    recording, Retina replays Sodium's visible terrain layers through `shadow.vsh/fsh` from a
-   light-space orthographic camera. `shadowtex0` uses a Vulkan comparison sampler and
-   `shadowtex1` exposes raw depth to post programs.
+   light-space orthographic camera, then replays captured compatible standard-entity indexed
+   draws with their original vertex/index buffers, dynamic-transform UBO, and atlas binding.
+   `shadowtex0` uses a Vulkan comparison sampler and `shadowtex1` exposes raw depth to post
+   programs.
 6. `VulkanDeviceMixin` reacquires the active in-memory shader source if Minecraft clears its
    pipeline cache during a resource reload.
 7. Old uniform and framebuffer storage remains alive for four frames after a successful swap.
@@ -98,8 +100,11 @@ composite/final programs.
 pipeline. Retina translates legacy inputs onto `DefaultVertexFormat.ENTITY`, supplies the
 matching vanilla transform, fog, lighting, `Sampler0`, and `Sampler2` ABI, and routes only the
 `pipeline/entity_*` family while `colortex0` owns the scene. This keeps unsupported armor, eyes,
-item, block-entity, and mod-defined formats on their vanilla pipelines. Entity draws do not yet
-replay into the terrain shadow map.
+item, custom block-entity, and mod-defined formats on their vanilla pipelines. During a shadow
+frame, compatible indexed draws from this standard family are recorded and replayed into the D32
+map with their original `DynamicTransforms` slice and `Sampler0` atlas. The replay shader uses
+the pack's shadow matrices and alpha-discard; a block entity is therefore covered only when it
+uses this independently validated standard ABI.
 
 When `colortex0` is a full-resolution `RGBA8_UNORM` target (the default), Retina temporarily
 routes Minecraft's main world target there for the LevelRenderer frame. Sky, clouds, weather,
@@ -110,7 +115,7 @@ different size or format retain the prior terrain-only route and log one explici
 warning rather than binding a mismatched Vulkan attachment.
 
 It intentionally rejects custom terrain resources, non-standard entity and block-entity shader
-programs, entity shadow casters, shadow comp, non-color/non-shadow post resources, and
+programs, non-standard entity shadow casters, shadow comp, non-color/non-shadow post resources, and
 deferred/prepare/setup passes. The backend-neutral core models more of that contract, but those
 dedicated programs are not yet connected to live Minecraft render stages. Add new stages
 transactionally and keep unsupported features as explicit diagnostics rather than silently
@@ -134,13 +139,21 @@ routed the normal scene through `colortex0`, recorded the 1024px terrain shadow 
 the standard entity path with no Retina, pipeline, Mixin, or Vulkan error. The only client log
 errors were expected offline development-account authentication failures.
 
-1. **Entity shadow casters.** Record/replay compatible entity draw data from the standard
-   entity pipeline into the shadow pass. Keep non-standard entity, armor, item, eye, and mod
-   pipelines on the fallback path until their vertex and bind-group ABIs are independently
-   validated. Then repeat for block entities and player/hand rendering.
+Gate 2 is complete: `RenderPassMixin` tracks the original resources and indexed draw arguments
+for compatible `pipeline/entity_*` / `DefaultVertexFormat.ENTITY` passes. `ShaderRuntime` replays
+their original buffers, dynamic transform UBOs, and atlas bindings after terrain into the live
+shadow map using a dedicated alpha-tested entity-shadow pipeline. The development client
+precompiled that pipeline on Vulkan, joined `shaderer test`, and logged `Recorded 1 standard
+entity/block-entity shadow draws` with no Retina, Mixin, pipeline, or Vulkan error. This proves
+the standard entity path; a chest probe remains a coverage candidate, not evidence that every
+block-entity ABI is supported.
+
+1. **Dedicated block entities and player/hand.** Add separately validated vertex/bind-group
+   paths before claiming coverage for non-standard block entities, armor, items, eyes, or the
+   player hand. Preserve the current safe exclusion for mod-defined formats.
 2. **Dedicated scene stages.** Move from scene-target preservation to real shader-pack stages
-   for block entities, particles, weather, clouds, sky, and effects, each with declared ordering
-   and a separate compatibility boundary.
+   for particles, weather, clouds, sky, and effects, each with declared ordering and a separate
+   compatibility boundary.
 3. **Pipeline breadth.** Connect `prepare`, `deferred`, `setup`, and `shadowcomp`; expand
    ping-pong, target scaling/resizing, and attachment behavior only with live GPU tests.
 4. **Resources and ecosystem.** Add pack textures/images/samplers, resource-pack texture

@@ -47,6 +47,12 @@ Validated on 2026-08-13 with Minecraft 26.2, Fabric Loader 0.19.3, Fabric API
     retained normal daylight, fogged distance, terrain detail, entities, and the player hand
     after the fullscreen resize. No Retina, pipeline, Mixin, or Vulkan error appeared; offline
     development-account authentication errors were unrelated.
+13. Gate 2 restarted the development client, precompiled the dedicated standard-entity shadow
+    pipeline on the AMD Vulkan device, and rejoined `shaderer test`. The first live frame routed
+    the entity family through `gbuffers_entities`, recorded the terrain shadow map, and logged
+    `Recorded 1 standard entity/block-entity shadow draws`. No Retina, Mixin, pipeline, or
+    Vulkan error followed. A nearby chest was placed as a future block-entity coverage probe;
+    the one verified replay is intentionally recorded as standard-entity ABI coverage only.
 
 ## Bugs found by the world tests
 

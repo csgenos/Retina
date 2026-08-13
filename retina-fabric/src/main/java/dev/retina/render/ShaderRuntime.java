@@ -6,6 +6,8 @@
 package dev.retina.render;
 
 import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.blaze3d.IndexType;
+import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.BindGroupLayout;
 import com.mojang.blaze3d.pipeline.BlendFunction;
@@ -54,6 +56,8 @@ import java.util.ArrayDeque;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.IdentityHashMap;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -82,6 +86,7 @@ public final class ShaderRuntime {
                               Map<PreparedTerrainPack.PassKind, RenderPipeline> pipelines,
                               RenderPipeline entityPipeline,
                               RenderPipeline shadowPipeline,
+                              RenderPipeline entityShadowPipeline,
                               Map<PreparedTerrainPack.PostProgram, RenderPipeline> postPipelines,
                               Map<RenderPipeline, ShaderSource> shaderSources,
                               DynamicUniformStorage<TerrainFrameUniform> uniformStorage,
@@ -124,6 +129,23 @@ public final class ShaderRuntime {
             new EnumMap<>(PreparedTerrainPack.PassKind.class);
     }
 
+    /** Mutable command state mirrored from the narrow vanilla entity ABI. */
+    private static final class EntityDrawState {
+        RenderPipeline pipeline;
+        final Map<String, GpuBufferSlice> uniforms = new HashMap<>();
+        final Map<String, TextureBinding> textures = new HashMap<>();
+        GpuBufferSlice vertexBuffer;
+        GpuBuffer indexBuffer;
+        IndexType indexType;
+    }
+
+    private record TextureBinding(GpuTextureView view, GpuSampler sampler) {
+    }
+
+    private record IndexedEntityDraw(EntityDrawState state, int indexCount, int instanceCount,
+                                     int firstIndex, int vertexOffset, int firstInstance) {
+    }
+
     private final AtomicLong generation = new AtomicLong();
     private final ArrayDeque<RetiredResources> retiredResources = new ArrayDeque<>();
     private final ExecutorService compilerExecutor;
@@ -149,6 +171,9 @@ public final class ShaderRuntime {
     private boolean loggedSceneRouting;
     private boolean loggedSceneFallback;
     private boolean loggedEntityRouting;
+    private boolean loggedEntityShadows;
+    private final Map<RenderPass, EntityDrawState> entityPasses = new IdentityHashMap<>();
+    private final List<IndexedEntityDraw> entityShadowDraws = new ArrayList<>();
 
     private ShaderRuntime() {
         ThreadFactory factory = runnable -> {
@@ -252,6 +277,13 @@ public final class ShaderRuntime {
                 precompile(prepared.entityProgram().sourceName(), entityPipeline, source);
                 sources.put(entityPipeline, source);
             }
+            RenderPipeline entityShadowPipeline = null;
+            if (prepared.shadowProgram() != null && prepared.entityProgram() != null) {
+                entityShadowPipeline = buildEntityShadowPipeline(prepared, prepared.shadowProgram());
+                ShaderSource source = entityShadowShaderSource(entityShadowPipeline, prepared);
+                precompile("entity shadow", entityShadowPipeline, source);
+                sources.put(entityShadowPipeline, source);
+            }
             for (PreparedTerrainPack.PostProgram post : prepared.compositePrograms()) {
                 RenderPipeline pipeline = buildPostPipeline(prepared, post, false,
                     mainTarget.getColorTexture().getFormat());
@@ -279,7 +311,7 @@ public final class ShaderRuntime {
                 : new ShadowFramebuffer(prepared.shadowProgram());
             ActivePack previous = active;
             active = new ActivePack(prepared, Map.copyOf(pipelines), entityPipeline,
-                shadowPipeline, Map.copyOf(postPipelines), Map.copyOf(sources), storage,
+                shadowPipeline, entityShadowPipeline, Map.copyOf(postPipelines), Map.copyOf(sources), storage,
                 framebuffer, shadowFramebuffer);
             if (previous != null) {
                 // Keep buffers alive for several rotations so already-submitted command
@@ -304,6 +336,9 @@ public final class ShaderRuntime {
             loggedSceneRouting = false;
             loggedSceneFallback = false;
             loggedEntityRouting = false;
+            loggedEntityShadows = false;
+            entityPasses.clear();
+            entityShadowDraws.clear();
             String detail = prepared.usesOffscreenTargets()
                 ? "Vulkan terrain MRT + composite/final active"
                 : "Vulkan terrain pipelines active";
@@ -403,6 +438,36 @@ public final class ShaderRuntime {
         return builder.build();
     }
 
+    /** Shadow-only version of Minecraft's stable entity vertex ABI. */
+    private static RenderPipeline buildEntityShadowPipeline(PreparedTerrainPack pack,
+                                                             PreparedTerrainPack.ShadowProgram program) {
+        String suffix = pack.contentHash().substring(0,
+            Math.min(12, pack.contentHash().length())) + "/entity-shadow";
+        Identifier shader = Identifier.fromNamespaceAndPath("retina", suffix);
+        RenderPipeline.Builder builder = RenderPipeline.builder()
+            .withBindGroupLayout(BindGroupLayouts.GLOBALS)
+            .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+            .withBindGroupLayout(BindGroupLayouts.FOG)
+            .withBindGroupLayout(BindGroupLayouts.LIGHTING)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER2)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER1)
+            .withBindGroupLayout(RETINA_UNIFORMS)
+            .withLocation(Identifier.fromNamespaceAndPath("retina", suffix))
+            .withVertexShader(shader)
+            .withFragmentShader(shader)
+            .withCull(program.cull())
+            .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, true))
+            .withPrimitiveTopology(PrimitiveTopology.QUADS)
+            .withVertexBinding(0, DefaultVertexFormat.ENTITY);
+        for (int location = 0; location < program.drawTargets().size(); location++) {
+            int target = program.drawTargets().get(location);
+            builder.withColorTargetState(location, new ColorTargetState(Optional.empty(),
+                ColortexFramebuffer.gpuFormat(program.colorTargets().get(target).format()), -1));
+        }
+        return builder.build();
+    }
+
     /**
      * A deliberately narrow replacement for Minecraft's normal entity family. The bind-group
      * order mirrors Minecraft's built-in entity snippet, so vanilla's entity renderer keeps
@@ -481,6 +546,50 @@ public final class ShaderRuntime {
         };
     }
 
+    /** Minimal alpha-tested entity caster using the pack's generated shadow matrices. */
+    private static ShaderSource entityShadowShaderSource(RenderPipeline pipeline,
+                                                         PreparedTerrainPack pack) {
+        String vertex = """
+            #version 450
+            layout(std140, binding = 0) uniform DynamicTransforms {
+                mat4 ModelViewMat;
+                vec4 ColorModulator;
+                vec3 ModelOffset;
+                mat4 TextureMat;
+            };
+            layout(std140, binding = 7) uniform RetinaUniforms {
+            """ + pack.uniforms().glslMembers() + """
+            };
+            layout(location = 0) in vec3 Position;
+            layout(location = 1) in vec4 Color;
+            layout(location = 2) in vec2 UV0;
+            layout(location = 0) out vec2 retina_uv;
+            layout(location = 1) out vec4 retina_color;
+            void main() {
+                gl_Position = shadowProjection * shadowModelView * vec4(Position + ModelOffset, 1.0);
+                retina_uv = UV0;
+                retina_color = Color * ColorModulator;
+            }
+            """;
+        String fragment = """
+            #version 450
+            layout(binding = 4) uniform sampler2D Sampler0;
+            layout(location = 0) in vec2 retina_uv;
+            layout(location = 1) in vec4 retina_color;
+            layout(location = 0) out vec4 fragColor;
+            void main() {
+                fragColor = texture(Sampler0, retina_uv) * retina_color;
+                if (fragColor.a < 0.1) discard;
+            }
+            """;
+        return (id, type) -> {
+            if (!id.equals(pipeline.getVertexShader()) && !id.equals(pipeline.getFragmentShader())) {
+                return null;
+            }
+            return type == ShaderType.VERTEX ? vertex : fragment;
+        };
+    }
+
     private void deactivate(long requestedGeneration) {
         if (generation.get() != requestedGeneration) {
             return;
@@ -538,6 +647,66 @@ public final class ShaderRuntime {
         return current.entityPipeline();
     }
 
+    /** Mirrors the resources of an eligible entity pass until its indexed draws are issued. */
+    public void trackEntityPipeline(RenderPass pass, RenderPipeline pipeline) {
+        ActivePack current = active;
+        if (current == null || current.entityShadowPipeline() == null || shadowRendering
+            || !isEntityPipeline(pipeline)) {
+            entityPasses.remove(pass);
+            return;
+        }
+        EntityDrawState state = new EntityDrawState();
+        state.pipeline = pipeline;
+        entityPasses.put(pass, state);
+    }
+
+    public void trackEntityUniform(RenderPass pass, String name, GpuBufferSlice value) {
+        EntityDrawState state = entityPasses.get(pass);
+        if (state != null) state.uniforms.put(name, value);
+    }
+
+    public void trackEntityTexture(RenderPass pass, String name, GpuTextureView view,
+                                   GpuSampler sampler) {
+        EntityDrawState state = entityPasses.get(pass);
+        if (state != null) state.textures.put(name, new TextureBinding(view, sampler));
+    }
+
+    public void trackEntityVertexBuffer(RenderPass pass, int slot, GpuBufferSlice value) {
+        EntityDrawState state = entityPasses.get(pass);
+        if (state != null && slot == 0) state.vertexBuffer = value;
+    }
+
+    public void trackEntityIndexBuffer(RenderPass pass, GpuBuffer buffer, IndexType type) {
+        EntityDrawState state = entityPasses.get(pass);
+        if (state != null) {
+            state.indexBuffer = buffer;
+            state.indexType = type;
+        }
+    }
+
+    public void captureEntityDraw(RenderPass pass, int indexCount, int instanceCount,
+                                  int firstIndex, int vertexOffset, int firstInstance) {
+        EntityDrawState state = entityPasses.get(pass);
+        if (state != null && state.vertexBuffer != null && state.indexBuffer != null
+            && state.uniforms.containsKey("DynamicTransforms") && state.textures.containsKey("Sampler0")) {
+            EntityDrawState snapshot = new EntityDrawState();
+            snapshot.pipeline = state.pipeline;
+            snapshot.uniforms.putAll(state.uniforms);
+            snapshot.textures.putAll(state.textures);
+            snapshot.vertexBuffer = state.vertexBuffer;
+            snapshot.indexBuffer = state.indexBuffer;
+            snapshot.indexType = state.indexType;
+            entityShadowDraws.add(new IndexedEntityDraw(snapshot, indexCount, instanceCount,
+                firstIndex, vertexOffset, firstInstance));
+        }
+    }
+
+    private static boolean isEntityPipeline(RenderPipeline pipeline) {
+        return pipeline.getVertexFormatBinding(0) == DefaultVertexFormat.ENTITY
+            && pipeline.getPrimitiveTopology() == PrimitiveTopology.QUADS
+            && pipeline.getLocation().getPath().startsWith("pipeline/entity_");
+    }
+
     /**
      * Returns the in-memory source for one active pipeline identity.
      *
@@ -558,6 +727,8 @@ public final class ShaderRuntime {
         // A failed frame must never leave Minecraft pointing at a retired colortex texture.
         restoreMainColorTarget();
         ActivePack current = active;
+        entityPasses.clear();
+        entityShadowDraws.clear();
         if (current == null) {
             return;
         }
@@ -719,6 +890,42 @@ public final class ShaderRuntime {
             deactivate(failedGeneration);
         } finally {
             shadowRendering = false;
+        }
+        replayEntityShadows(current);
+    }
+
+    private void replayEntityShadows(ActivePack current) {
+        if (current.entityShadowPipeline() == null || entityShadowDraws.isEmpty()
+            || shadowUniforms == null || current.shadowFramebuffer() == null) {
+            return;
+        }
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        RenderPassDescriptor descriptor = RenderPassDescriptor.create(() -> "Retina entity shadows");
+        for (GpuTextureView attachment : current.shadowFramebuffer().colorAttachments()) {
+            descriptor.withColorAttachment(attachment);
+        }
+        descriptor.withDepthAttachment(current.shadowFramebuffer().depthView(), OptionalDouble.empty());
+        int size = current.shadowFramebuffer().size();
+        descriptor.withRenderArea(new RenderPass.RenderArea(0, 0, size, size));
+        try (RenderPass pass = encoder.createRenderPass(descriptor)) {
+            pass.setPipeline(current.entityShadowPipeline());
+            pass.setUniform("RetinaUniforms", shadowUniforms);
+            for (IndexedEntityDraw draw : entityShadowDraws) {
+                for (Map.Entry<String, GpuBufferSlice> uniform : draw.state().uniforms.entrySet()) {
+                    pass.setUniform(uniform.getKey(), uniform.getValue());
+                }
+                for (Map.Entry<String, TextureBinding> texture : draw.state().textures.entrySet()) {
+                    pass.bindTexture(texture.getKey(), texture.getValue().view(), texture.getValue().sampler());
+                }
+                pass.setVertexBuffer(0, draw.state().vertexBuffer);
+                pass.setIndexBuffer(draw.state().indexBuffer, draw.state().indexType);
+                pass.drawIndexed(draw.indexCount(), draw.instanceCount(), draw.firstIndex(),
+                    draw.vertexOffset(), draw.firstInstance());
+            }
+            if (!loggedEntityShadows) {
+                loggedEntityShadows = true;
+                LOGGER.info("Recorded {} standard entity/block-entity shadow draws", entityShadowDraws.size());
+            }
         }
     }
 
