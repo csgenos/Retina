@@ -27,7 +27,19 @@ import java.nio.file.StandardCopyOption;
 public record RetinaConfig(String selectedPack, RendererProfile profile, boolean debugOverlay,
                            boolean validationLayers, String adapterOverride,
                            long vramBudgetMegabytes, boolean parallelCompilation,
-                           int compileThreads, transient Path file) {
+                           int compileThreads, Path file) {
+
+    /** JSON shape kept separate so the runtime-only config path is never persisted. */
+    private record PersistedConfig(String selectedPack, RendererProfile profile,
+                                   boolean debugOverlay, boolean validationLayers,
+                                   String adapterOverride, long vramBudgetMegabytes,
+                                   boolean parallelCompilation, int compileThreads) {
+        private RetinaConfig bind(Path path) {
+            return new RetinaConfig(selectedPack, profile, debugOverlay, validationLayers,
+                adapterOverride, vramBudgetMegabytes, parallelCompilation, compileThreads,
+                path);
+        }
+    }
 
     /** Renderer-level profiles. They change overhead, never pack semantics. */
     public enum RendererProfile {
@@ -105,8 +117,8 @@ public record RetinaConfig(String selectedPack, RendererProfile profile, boolean
         }
         String json = Files.readString(path, StandardCharsets.UTF_8);
         try {
-            RetinaConfig parsed = GSON.fromJson(json, RetinaConfig.class);
-            return parsed == null ? defaults().withFile(path) : parsed.withFile(path).sanitised();
+            PersistedConfig parsed = GSON.fromJson(json, PersistedConfig.class);
+            return parsed == null ? defaults().withFile(path) : parsed.bind(path).sanitised();
         } catch (JsonSyntaxException e) {
             throw new IOException("config/retina/retina.json is not valid JSON", e);
         }
@@ -139,7 +151,10 @@ public record RetinaConfig(String selectedPack, RendererProfile profile, boolean
         }
         Files.createDirectories(file.getParent());
         Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
-        Files.writeString(temporary, GSON.toJson(this), StandardCharsets.UTF_8);
+        PersistedConfig persisted = new PersistedConfig(selectedPack, profile, debugOverlay,
+            validationLayers, adapterOverride, vramBudgetMegabytes, parallelCompilation,
+            compileThreads);
+        Files.writeString(temporary, GSON.toJson(persisted), StandardCharsets.UTF_8);
         Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
     }
 }

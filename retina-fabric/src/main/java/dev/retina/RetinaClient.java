@@ -7,6 +7,7 @@ package dev.retina;
 
 import dev.retina.config.RetinaConfig;
 import dev.retina.pipeline.PackManager;
+import dev.retina.render.ShaderRuntime;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
@@ -63,8 +64,12 @@ public final class RetinaClient implements ClientModInitializer {
                 e.getMessage());
         }
 
-        LOGGER.info("Retina {} initialised; shaders are off until a pack is selected",
-            RetinaVersion.full());
+        ShaderRuntime.get().initialize(packManager, config);
+
+        LOGGER.info("Retina {} initialised; {}", RetinaVersion.full(),
+            config.shadersEnabled()
+                ? "compiling selected pack " + config.selectedPack()
+                : "shaders are off until a pack is selected");
     }
 
     /** The active configuration. */
@@ -80,10 +85,20 @@ public final class RetinaClient implements ClientModInitializer {
         } catch (IOException e) {
             LOGGER.warn("Could not save config/retina/retina.json: {}", e.getMessage());
         }
+        if (packManager != null) {
+            ShaderRuntime.get().request(next);
+        }
     }
 
     /** The pack manager, or null when Retina is inert. */
     public static PackManager packManager() {
         return packManager;
+    }
+
+    /** Rebuilds the currently selected pack after its option values changed. */
+    public static void reloadShaders() {
+        if (packManager != null && config.shadersEnabled()) {
+            ShaderRuntime.get().request(config);
+        }
     }
 }

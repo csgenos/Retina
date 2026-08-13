@@ -264,9 +264,16 @@ public final class RenderTargetDirectives {
                 float scale = Float.parseFloat(parts[0]);
                 float offsetX = parts.length > 1 ? Float.parseFloat(parts[1]) : 0f;
                 float offsetY = parts.length > 2 ? Float.parseFloat(parts[2]) : 0f;
-                if (!(scale > 0f) || scale > 16f) {
+                if (!Float.isFinite(scale) || !Float.isFinite(offsetX)
+                    || !Float.isFinite(offsetY) || !(scale > 0f) || scale > 1f) {
                     problems.add("scale." + program + " is " + scale
-                        + "; only values in (0, 16] are supported");
+                        + "; scale must be finite and in (0, 1]");
+                    continue;
+                }
+                if (offsetX < 0f || offsetY < 0f || offsetX + scale > 1f
+                    || offsetY + scale > 1f) {
+                    problems.add("scale." + program + " viewport " + scale + " "
+                        + offsetX + " " + offsetY + " falls outside the render target");
                     continue;
                 }
                 scales.put(program, new PassScale(scale, offsetX, offsetY));

@@ -1,173 +1,124 @@
-# Retina — handoff
+# Retina handoff
 
-Work was stopped partway through by request. This document states exactly what exists, what
-is proven, what is unproven, and what the next person should do first.
+Current as of 2026-08-13. The Minecraft 26.2/Fabric/Sodium terrain MRT, shadow, and
+composite/final renderer is implemented, built, and exercised in a live world. `README.md`
+defines the supported pack surface and `docs/LIVE_RENDER_VALIDATION.md` records the live test.
 
-Read `docs/ARCHITECTURE_AUDIT.md` before anything else. It contains the finding that
-reshaped the design and the measured environment limits.
+## Architecture
 
----
+Minecraft 26.2 owns the Vulkan instance, device, surface, swapchain, and command stream.
+Retina deliberately uses that native Blaze3D backend; it does not create a second Vulkan
+device or copy Sodium terrain buffers to one. Sodium 0.9.1 continues to own chunk building,
+culling, batching, and draw submission.
 
-## 1. The one thing to know before touching the design
+The live bridge works as follows:
 
-**Minecraft 26.2 already ships a native Vulkan Blaze3D backend, and Sodium 0.9.1 already
-uses it.** This was verified by disassembling the supplied Sodium jar:
+1. `TerrainPackCompiler` resolves solid, cutout, and translucent program fallbacks, applies
+   pack options/includes, translates legacy GLSL, and adapts it to Sodium's terrain ABI.
+2. `ShaderRuntime` validates a candidate off-thread, then precompiles every terrain, shadow,
+   composite, and final GPU pipeline on the render thread. The active pack swaps only after
+   every pipeline and framebuffer resource succeeds.
+3. Sodium mixins select the active pipeline, bind Retina's std140 terrain UBO, and extend the
+   compact vertex format with a packed face normal for legacy `gl_Normal`.
+4. `ColortexFramebuffer` owns two textures per referenced target, clear/mipmap/resize
+   lifecycle, and Iris-style per-pass ping-pong state. Numbered composite passes render a
+   procedural fullscreen triangle and final presents into Minecraft's main target.
+5. `ShadowFramebuffer` owns a D32 map and up to two shadowcolor targets. At the end of world
+   recording, Retina replays Sodium's visible terrain layers through `shadow.vsh/fsh` from a
+   light-space orthographic camera. `shadowtex0` uses a Vulkan comparison sampler and
+   `shadowtex1` exposes raw depth to post programs.
+6. `VulkanDeviceMixin` reacquires the active in-memory shader source if Minecraft clears its
+   pipeline cache during a resource reload.
+7. Old uniform and framebuffer storage remains alive for four frames after a successful swap.
+   A failed compile leaves the previous pack active and exposes the diagnostic in the
+   shader-pack screen.
 
-- `com.mojang.blaze3d.vulkan.{VulkanDevice, VulkanRenderPass, VulkanRenderPipeline}` exist.
-- Sodium's `VulkanRenderPassAccessor` pulls an `org.lwjgl.vulkan.VkCommandBuffer` out of a
-  render pass.
-- Sodium's `VulkanPipelineMixin` adds a 20-byte push-constant range to its own pipelines.
-- Sodium picks between `OPENGL`, `VK_MULTIDRAW` and `VK_INDIRECT` at runtime from
-  `GpuDevice.getDeviceInfo().features()`.
+The extended 24-byte terrain vertex format is always used, including with shaders off. This
+makes pack toggles safe without rebuilding chunk meshes; Sodium ignores the extra four bytes
+on its normal pipeline.
 
-The original brief assumed Minecraft is OpenGL-only and asked for Retina to create its own
-Vulkan instance, device, surface and swapchain. **That would be wrong for 26.2** — two Vulkan
-devices cannot present to one GLFW window, and Sodium's terrain buffers live on Minecraft's
-device, so a second device could not draw them without a per-frame copy.
+## Proven state
 
-Retina therefore attaches to Minecraft's Vulkan device instead of creating one. This is still
-a genuine native Vulkan path (no OpenGL, no Zink/ANGLE/DXVK) but the ownership is Minecraft's.
-Do not "fix" this back to a private device without re-reading the audit.
+Run from the repository root with JDK 25:
 
----
-
-## 2. What is real and proven
-
-`retina-core` — a Gradle module with **no Minecraft dependency at all**. It builds and its
-tests run in this environment.
-
-```
-gradle build -Pretina.coreOnly=true      # 72 tests, 0 failures
-```
-
-The tests are not string-comparison tests. `TranslationCompilesTest` takes real GLSL 120,
-330-compatibility and 430 pack sources, translates them, compiles the result through **real
-shaderc** to SPIR-V, and asserts on the **reflected SPIR-V module** — vertex input locations,
-descriptor set/binding assignments, fragment output locations, push-constant presence.
-
-Proven working:
-
-| Area | Package | Notes |
-| --- | --- | --- |
-| Pack I/O | `core.pack` | Directory, ZIP and in-memory sources. Traversal, symlink escape, decompression bombs and NUL injection are all refused, with tests |
-| Preprocessor | `core.preprocess` | Include expansion with exact per-line provenance; cycles, bombs and missing includes reported against the including file and line |
-| Options | `core.option` | Discovery from annotated `#define`/`const`; applied by rewriting the declaration site, not by injecting macros (which does not work for `const` and is overridden for `#define`) |
-| Translation | `core.translate` | Token-accurate lexer; legacy builtins, varying location allocation, descriptor sets, `DRAWBUFFERS`/`RENDERTARGETS`, alpha-test-as-discard |
-| SPIR-V | `core.spirv` | shaderc compile + direct constant-pool reflection |
-| Render graph | `core.graph` | Refuses read-write hazards and uninitialised reads at build time; derives barriers once; aliases transient memory |
-| Properties | `core.props` | `shaders.properties` typed, with unknown directives **reported** rather than ignored |
-| Material maps | `core.material` | `block/item/entity.properties` with pack-assigned ids and state predicates |
-| Cache keys | `core.cache` | Refuse to build unless every invalidating input was supplied |
-
-Three real bugs were found and fixed by these tests, which is the reason to trust them:
-wrong `shaderc_shader_kind` constants (compute was compiling as vertex), dropped
-`layout(rgba16f)` qualifiers on storage images, and a `Map.copyOf` that randomised the
-uniform block's std140 member order per JVM run.
-
----
-
-## 3. What is written but never compiled
-
-`retina-fabric` — **has never been compiled and cannot be here.** `maven.fabricmc.net`,
-`libraries.minecraft.net` and `piston-meta.mojang.com` are all blocked by the proxy (403),
-so Loom cannot resolve Minecraft, mappings, or Fabric Loader.
-
-Its Blaze3D and Sodium call sites were written against symbols read out of the supplied jars'
-constant pools, which is authoritative for what Sodium calls and silent about everything else.
-Expect compile errors. Files present:
-
-```
-RetinaPreLaunch          compatibility gate (throws -> Fabric error screen)
-RetinaClient             lazy init; no GPU work at startup
-RetinaVersion
-compat/ModConflicts      Iris/OptiFabric/Canvas/VulkanMod/Sulkan/Embeddium detection
-compat/SodiumCompatibility   fail-closed allowlist on 0.9.1+mc26.2
-compat/CompatibilityReport
-vk/VulkanBackend         identifies the Blaze3D backend; refuses OpenGL with a fixable message
-mixin/blaze3d/VulkanRenderPassAccessor
-pipeline/PackManager     discovery, inspection, per-pack option persistence
-gui/ShaderPackScreen     pack list, Shaders: Off default, explicit Apply
-gui/ShaderOptionScreen   per-pack options honouring the pack's own screen layout
-config/RetinaConfig      renderer profiles that never alter pack semantics
-resources/               fabric.mod.json, mixins, accesswidener, en_us.json
+```powershell
+.\gradlew.bat build --rerun-tasks --no-daemon
 ```
 
-**Not implemented at all:** the actual render pipeline. Nothing binds a translated pack
-program to a live Vulkan pipeline, nothing hooks `ShaderChunkRenderer.compileProgram`,
-nothing writes the uniform ring buffer, nothing executes the render graph. The core produces
-validated SPIR-V and a validated graph; the bridge that consumes them does not exist.
+The current build passes 76 tests with zero failures: 73 backend-neutral pack, preprocessing,
+translation, SPIR-V, render-graph, material, option, and safety tests plus three Fabric tests
+that compile real GLSL 120 terrain and MRT/composite/final packs through shaderc and enforce
+the live attachment limit.
 
----
+Live validation used Minecraft 26.2, Fabric Loader 0.19.3, Sodium 0.9.1, and an AMD Radeon RX
+6800 XT on Blaze3D Vulkan 1.4.315. A temporary GLSL 120 pack rendered terrain into RGBA8 and
+RGBA16F attachments, sampled both in a mipmapped composite pass, ping-ponged colortex0, and
+presented it through final. A second temporary pack rendered a 512px D32 terrain shadow map,
+then sampled both raw and comparison depth in final. No Retina, pipeline, Mixin, or Vulkan
+error remained after joining. The MRT chain also remained valid after resizing from 856x512 to
+2560x1440. A separate OpenGL run with shaders off rendered the same world correctly through
+Sodium's ordinary pipeline.
 
-## 4. Recommended order of work
+The distributable artifact is:
 
-1. **Get `retina-fabric` to compile.** On a machine with network access:
-   `gradle build`. Fix what the compiler finds. Verify `fabric-loom 1.14-SNAPSHOT` is right
-   for 26.2 — the version in `gradle.properties` is a guess.
-2. **Verify the `VulkanRenderPass` field names.** `VulkanRenderPassAccessor` uses
-   `@Accessor("commandBuffer")` and `@Accessor("pipeline")`. Sodium's equivalent accessor
-   proves the *methods* exist; the underlying *field names* were inferred. Check against the
-   real class and correct them.
-3. **Gate 3 before gate 5.** Get a vanilla-equivalent frame drawing through the attached
-   device with `Shaders: Off` before wiring any pack program. A pack pipeline built on an
-   unproven frame path is untestable.
-4. **Wire `ShaderChunkRenderer.compileProgram`** — that is the single Sodium integration
-   point that matters, and it is narrow.
-5. **Only then** run the compatibility matrix against real packs.
+```text
+retina-fabric/build/libs/retina-0.1.0+mc26.2.jar
+```
 
----
+## Supported live pack surface
 
-## 5. Things that would be easy to get wrong
+The current bridge supports Sodium terrain programs and their historical fallback chain,
+`gtexture`/`texture`, `lightmap`, up to eight simultaneous outputs selected from
+`colortex0..15`, terrain matrices/state uniforms, and Sodium's 20-byte per-region
+push-constant ABI. Live target management includes double buffering, clear and supported
+format directives, mipmaps, flips, custom post-target sizes, pass scaling, numbered composite
+passes, final/internal-final presentation, and resize-safe resource retirement.
 
-- `gl_NormalMatrix` is `mat3`, not `mat4`. Emitting it as a `mat4` corrupts every normal a
-  pack transforms and produces plausible-looking wrong lighting.
-- `gl_MultiTexCoord1` and `gl_MultiTexCoord2` are the *same* lightmap coordinate. They share
-  one attribute location; separate locations leave one unfed.
-- Never emit `#define texture gtexture` for the legacy sampler alias. `texture` is also a
-  GLSL builtin function, and the macro rewrites every `texture(sampler, uv)` call into a call
-  on a variable. Rename at token level instead (already done — do not undo it).
-- `shadow2D`/`shadow2DProj` must be *wrapped*, not renamed to `texture`: the return type
-  changes from `vec4` to `float` and packs index the result.
-- Do not emit `#line` from the preprocessor. GLSL implementations disagree about whether
-  `#line n` numbers the directive's line or the following one, which would make error
-  provenance driver-dependent. Retina maps diagnostics through its own run list.
-- The render graph refusing a "read before write" is usually a *real* pack bug or a missing
-  history declaration. Do not relax it to make a pack load.
+Terrain shadows are supported through `shadow.vsh/fsh`, a 128..4096 power-of-two
+`shadowMapResolution`, `shadowDistance`, D32 `shadowtex0/1`, and up to two `shadowcolor`
+attachments. The visible terrain layers are re-submitted from the light view; shadows may be
+sampled as raw depth (`shadowtex1`) or with hardware comparison (`shadowtex0`/`shadow`) in
+composite/final programs.
 
----
+`gbuffers_entities.vsh/fsh` is also supported for the standard Minecraft entity quad
+pipeline. Retina translates legacy inputs onto `DefaultVertexFormat.ENTITY`, supplies the
+matching vanilla transform, fog, lighting, `Sampler0`, and `Sampler2` ABI, and routes only the
+`pipeline/entity_*` family while `colortex0` owns the scene. This keeps unsupported armor, eyes,
+item, block-entity, and mod-defined formats on their vanilla pipelines. Entity draws do not yet
+replay into the terrain shadow map.
 
-## 6. Honest status against the brief's acceptance criteria
+When `colortex0` is a full-resolution `RGBA8_UNORM` target (the default), Retina temporarily
+routes Minecraft's main world target there for the LevelRenderer frame. Sky, clouds, weather,
+particles, entities, and block entities consequently survive through normal/composite/final
+processing without forcing those renderers through Sodium's terrain vertex ABI. The player's
+hand still renders after final presentation, as vanilla expects. Packs whose `colortex0` uses a
+different size or format retain the prior terrain-only route and log one explicit fallback
+warning rather than binding a mismatched Vulkan attachment.
 
-| Criterion | Status |
-| --- | --- |
-| Fabric client mod jar with mod id `retina`, independent packages/resources/config | Structure done; **jar never built** |
-| Prism starts MC 26.2 with Fabric API, Sodium and Retina | **Not tested** |
-| Log proves presentation through Vulkan on the selected GPU | Banner code written; **never run** |
-| No OpenGL path required while Retina is active | True by construction; **unverified** |
-| Sodium CPU terrain pipeline genuinely integrated | **Not implemented** |
-| `Shaders: Off` default, visually matching vanilla/Sodium | Default is correct; **rendering not implemented** |
-| No cinematic pack bundled or silently enabled | **True** — verified, nothing ships |
-| Packs discoverable, configurable, enable/reload/switch/disable through UI | Discovery, inspection and settings persistence work and are tested; **apply/reload not wired to a renderer** |
-| A failed shader never strands the user on a black screen | Designed transactionally; **not exercised** |
-| Core behaviours have tests | **True** — 72 tests |
-| Unsupported OpenGL semantics reported honestly | **True** — `gl_TextureMatrix`, dual-source blend, illegal blend factors, non-storage-capable formats, unknown directives |
-| Validation reports no Vulkan errors | **Not run** |
-| Steady loop free of `vkDeviceWaitIdle`/readback/pipeline creation | Designed for; **no loop exists yet** |
-| Performance claims backed by measurement | **No performance claims are made** |
-| Shipped artefact is not Sulkan renamed and not Iris rebundled | **True** — Sulkan was never supplied; no Iris code copied |
+It intentionally rejects custom terrain resources, non-standard entity and block-entity shader
+programs, entity shadow casters, shadow comp, non-color/non-shadow post resources, and
+deferred/prepare/setup passes. The backend-neutral core models more of that contract, but those
+dedicated programs are not yet connected to live Minecraft render stages. Add new stages
+transactionally and keep unsupported features as explicit diagnostics rather than silently
+changing pack semantics.
 
-No release artefacts were produced. `docs/BENCHMARKS.md` was not written because there are
-no benchmarks; writing one would mean fabricating numbers.
+## Invariants to preserve
 
----
+- Do not replace Blaze3D's Vulkan device with a private Retina device.
+- Do not mutate the terrain vertex format only while a pack is active; that would make cached
+  chunk meshes incompatible across toggles.
+- Keep GPU pipeline creation on the render thread and compilation preparation off it.
+- Never discard the active pack until every candidate pipeline and framebuffer has been
+  created successfully.
+- `gl_NormalMatrix` is a `mat3`.
+- `gl_MultiTexCoord1` and `gl_MultiTexCoord2` share the lightmap input.
+- Rename legacy sampler aliases token-wise; a `#define texture gtexture` also rewrites GLSL's
+  `texture(...)` function and is invalid.
+- Keep source provenance in Retina's line map rather than relying on driver-specific `#line`
+  behavior.
 
-## 7. Licensing
+## Licensing
 
-- Retina is **LGPL-3.0-only**, matching Iris, to remove any question about contract lineage.
-  `LICENSE` and `NOTICE` still need to be added at the repository root — the build script
-  already references them.
-- **No Iris code was copied.** Iris was read to establish the pack format contract, which is
-  an interface fact rather than copyrightable expression.
-- **Sodium is Polyform Shield 1.0.0 — not open source.** It forbids use to compete with the
-  licensor. Retina depends on it at runtime and compiles against it; it must never vendor,
-  fork or redistribute Sodium source or jars.
+Retina is LGPL-3.0-only. Root `LICENSE` and `NOTICE` files are included in the Fabric jar.
+No Iris source is copied and Sodium is used only as a runtime/compile dependency; do not
+vendor or redistribute Sodium source or jars.

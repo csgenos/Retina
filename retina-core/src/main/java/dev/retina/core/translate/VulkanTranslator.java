@@ -133,8 +133,12 @@ public final class VulkanTranslator {
         out.append(prologue);
         out.append(GlslLexer.render(tail));
 
+        Set<String> resourcesInThisStage = collected.opaqueUniforms.keySet().stream()
+            .map(BindingLayout::canonicalName).collect(java.util.stream.Collectors.toSet());
+        List<BindingLayout.Binding> stageBindings = layout.usedBindings().stream()
+            .filter(binding -> resourcesInThisStage.contains(binding.name())).toList();
         return new TranslatedSource(out.toString(), prologueLines,
-            versionIndex < 0 ? 0 : versionLine, layout.usedBindings(),
+            versionIndex < 0 ? 0 : versionLine, stageBindings,
             resolved.drawBuffers().targets(), warnings);
     }
 

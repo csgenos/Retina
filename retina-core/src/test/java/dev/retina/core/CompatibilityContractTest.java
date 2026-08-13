@@ -12,6 +12,7 @@ import dev.retina.core.material.IdMap;
 import dev.retina.core.program.DimensionId;
 import dev.retina.core.program.ProgramId;
 import dev.retina.core.props.ShaderProperties;
+import dev.retina.core.props.OrderedProperties;
 import dev.retina.core.state.AlphaTest;
 import dev.retina.core.state.BlendMode;
 import dev.retina.core.target.RenderTargetDirectives;
@@ -205,6 +206,24 @@ class CompatibilityContractTest {
             assertFalse(directives.applyConstDirective("colortex0Format", "RGBA99F"));
             assertFalse(directives.applyConstDirective("colortex99Format", "RGBA8"));
             assertEquals(2, directives.problems().size(), () -> directives.problems().toString());
+        }
+
+        @Test
+        @DisplayName("post scales stay inside their render target")
+        void postScalesAreBounded() {
+            RenderTargetDirectives directives = new RenderTargetDirectives();
+            Map<String, RenderTargetDirectives.PassScale> scales = directives.readPassScales(
+                OrderedProperties.parse("shaders.properties", """
+                    scale.composite=0.5 0.25 0.25
+                    scale.composite1=1.5 0 0
+                    scale.composite2=0.75 0.5 0
+                    """));
+
+            assertEquals(new RenderTargetDirectives.PassScale(0.5f, 0.25f, 0.25f),
+                scales.get("composite"));
+            assertFalse(scales.containsKey("composite1"));
+            assertFalse(scales.containsKey("composite2"));
+            assertEquals(2, directives.problems().size());
         }
     }
 

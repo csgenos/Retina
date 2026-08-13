@@ -34,10 +34,8 @@ import java.util.Optional;
  * crash.
  *
  * <h2>Verification status</h2>
- * <p>The Blaze3D Vulkan class and method names used here were read out of the compiled
- * Sodium 0.9.1 jar's constant pool, which is authoritative for what Sodium calls. They have
- * <em>not</em> been compiled against Minecraft 26.2, because that requires artefacts this
- * build environment cannot reach. See {@code docs/ARCHITECTURE_AUDIT.md}.
+ * <p>This path is compiled against Minecraft 26.2 and Sodium 0.9.1 and is covered by the
+ * live-render procedure in {@code docs/LIVE_RENDER_VALIDATION.md}.
  */
 public final class VulkanBackend {
     private static final Logger LOGGER = LoggerFactory.getLogger("Retina/Vulkan");
@@ -75,9 +73,9 @@ public final class VulkanBackend {
      * Identifies the active Blaze3D backend.
      *
      * <p>Called once, after the device exists and before Retina touches any render state.
-     * Identification is by class name rather than by {@code instanceof}, so that a build of
-     * Retina running against a Minecraft version whose Vulkan classes moved reports "unknown
-     * backend" instead of failing to load.
+     * Identification uses {@link DeviceInfo#backendName()}. In 26.2 RenderSystem exposes a
+     * stable {@code GpuDevice} facade for every backend; testing the facade's class name would
+     * therefore report both OpenGL and Vulkan as the same implementation.
      */
     public static Attachment attach() {
         GpuDevice device;
@@ -93,22 +91,6 @@ public final class VulkanBackend {
             return attachment;
         }
 
-        String className = device.getClass().getName();
-        if (className.startsWith("com.mojang.blaze3d.opengl.")) {
-            attachment = new Attachment.WrongBackend("OpenGL");
-            LOGGER.error("Retina requires the Vulkan backend; Minecraft created {}", className);
-            return attachment;
-        }
-        if (!className.startsWith("com.mojang.blaze3d.vulkan.")) {
-            attachment = new Attachment.Unknown("unrecognised GpuDevice implementation "
-                + className);
-            LOGGER.error("Retina does not recognise the graphics backend {}", className);
-            return attachment;
-        }
-
-        // `DeviceInfo.backendName()` and `DeviceInfo.features()` are the two accessors
-        // Sodium 0.9.1 itself calls; using the same pair keeps Retina on the surface that is
-        // known to exist rather than on one inferred from a newer or older Minecraft.
         DeviceInfo info;
         try {
             info = device.getDeviceInfo();
@@ -117,8 +99,21 @@ public final class VulkanBackend {
                 "GpuDevice.getDeviceInfo() failed: " + e.getMessage());
             return attachment;
         }
+        String backendName = safe(info::backendName);
+        String normalisedBackend = backendName.toLowerCase(java.util.Locale.ROOT);
+        if (normalisedBackend.contains("opengl")) {
+            attachment = new Attachment.WrongBackend(backendName);
+            LOGGER.error("Retina requires the Vulkan backend; Minecraft created {}", backendName);
+            return attachment;
+        }
+        if (!normalisedBackend.contains("vulkan")) {
+            attachment = new Attachment.Unknown("unrecognised graphics backend " + backendName);
+            LOGGER.error("Retina does not recognise the graphics backend {}", backendName);
+            return attachment;
+        }
         Attachment.Attached attached = new Attachment.Attached(
-            className, describeFeatures(info), safe(info::backendName));
+            safe(info::name) + " (" + safe(info::vendorName) + ")",
+            safe(info::driverInfo), backendName);
         attachment = attached;
         logStartupBanner(attached, device, info);
         return attached;
@@ -135,8 +130,9 @@ public final class VulkanBackend {
                                          DeviceInfo info) {
         LOGGER.info("=== Retina Vulkan backend ===");
         LOGGER.info("  Blaze3D backend : {}", attached.apiVersion());
-        LOGGER.info("  GpuDevice class : {}", attached.deviceName());
-        LOGGER.info("  Device features : {}", attached.driverInfo());
+        LOGGER.info("  Graphics device : {}", attached.deviceName());
+        LOGGER.info("  Driver          : {}", attached.driverInfo());
+        LOGGER.info("  Device features : {}", describeFeatures(info));
         LOGGER.info("  Retina attaches to Minecraft's Vulkan device; it does not create its"
             + " own instance, device or swapchain.");
         LOGGER.info("=============================");

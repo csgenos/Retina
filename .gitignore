@@ -1,3 +1,5 @@
 build/
 .gradle/
 *.class
+retina-fabric/run/
+retina-fabric/logs/

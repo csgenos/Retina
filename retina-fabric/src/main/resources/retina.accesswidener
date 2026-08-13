@@ -1,8 +1,7 @@
-accessWidener v2 named
+accessWidener v2 official
 
 # Retina needs to read the Vulkan device and command buffer Minecraft already owns rather
 # than creating its own. These are the same members Sodium 0.9.1 reaches for; widening them
 # here keeps the access in one reviewable place instead of spread across mixins.
 accessible class com/mojang/blaze3d/vulkan/VulkanDevice
-accessible class com/mojang/blaze3d/vulkan/VulkanRenderPass
 accessible class com/mojang/blaze3d/vulkan/VulkanRenderPipeline

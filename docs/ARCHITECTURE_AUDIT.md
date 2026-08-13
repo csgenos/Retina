@@ -1,5 +1,10 @@
 # Retina architecture audit
 
+> Implementation update, 2026-08-13: Minecraft sources and all Fabric dependencies are now
+> resolved locally. The Fabric bridge builds and has rendered a translated terrain shader in
+> a live Vulkan world. Historical environment-limit statements below describe the earlier
+> audit; current evidence is in `LIVE_RENDER_VALIDATION.md`.
+
 This document records what was actually found by inspecting the resolved dependencies, and
 what those findings mean for Retina's design. Nothing here is recalled from memory; every
 claim about an API is traceable to a symbol read out of a shipped jar, and where a claim
@@ -299,7 +304,7 @@ dev.retina.core.*                  (retina-core — no Minecraft dependency at a
 ```
 
 The split is load-bearing, not cosmetic. Everything in `retina-core` is testable without
-Minecraft, a window, or a GPU, which is why 72 tests run in this environment against real
+Minecraft, a window, or a GPU, which is why 73 tests run in this environment against real
 shaderc. Mixins never appear below `dev.retina.mixin`; raw Vulkan never appears above it.
 
 ---
@@ -321,7 +326,7 @@ Reachability was measured, not assumed:
 
 What follows from that, precisely:
 
-- **`retina-core` is built and tested here.** 72 tests pass, including compiling real
+- **`retina-core` is built and tested here.** 73 tests pass, including compiling real
   GLSL 120/330/430 pack sources through shaderc to SPIR-V and reflecting the modules.
 - **`retina-fabric` has never been compiled.** It cannot be, without Minecraft 26.2, Fabric
   Loader, and Loom. Its Blaze3D and Sodium call sites were written against symbols read out

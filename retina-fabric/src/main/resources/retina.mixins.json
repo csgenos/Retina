@@ -1,12 +1,25 @@
 {
   "required": true,
   "package": "dev.retina.mixin",
-  "compatibilityLevel": "JAVA_21",
+  "compatibilityLevel": "JAVA_25",
   "minVersion": "0.8",
   "injectors": {
     "defaultRequire": 1
   },
   "client": [
-    "blaze3d.VulkanRenderPassAccessor"
+    "blaze3d.CommandEncoderAccessor",
+    "blaze3d.RenderTargetColorAccessor",
+    "blaze3d.RenderPassMixin",
+    "blaze3d.VulkanCommandEncoderAccessor",
+    "blaze3d.VulkanGpuSamplerAccessor",
+    "blaze3d.VulkanDeviceMixin",
+    "minecraft.LevelRendererMixin",
+    "minecraft.OptionsSubScreenAccessor",
+    "minecraft.VideoSettingsScreenMixin",
+    "sodium.BlockRendererMixin",
+    "sodium.ChunkMeshFormatsMixin",
+    "sodium.DefaultChunkRendererMixin",
+    "sodium.DefaultFluidRendererMixin",
+    "sodium.ShaderChunkRendererMixin"
   ]
 }
