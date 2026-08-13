@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "retina",
+  "version": "${version}",
+  "name": "Retina",
+  "description": "A highly optimized Vulkan shader-pack loader for Fabric and Sodium.",
+  "authors": [
+    "the Retina contributors"
+  ],
+  "contact": {
+    "sources": "https://github.com/csgenos/retina",
+    "issues": "https://github.com/csgenos/retina/issues"
+  },
+  "license": "LGPL-3.0-only",
+  "icon": "assets/retina/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "preLaunch": [
+      "dev.retina.RetinaPreLaunch"
+    ],
+    "client": [
+      "dev.retina.RetinaClient"
+    ]
+  },
+  "accessWidener": "retina.accesswidener",
+  "mixins": [
+    "retina.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~26.2",
+    "java": ">=21",
+    "sodium": "0.9.x",
+    "fabric-resource-loader-v0": "*",
+    "fabric-screen-api-v1": "*",
+    "fabric-key-mapping-api-v1": "*"
+  },
+  "breaks": {
+    "iris": "*",
+    "optifabric": "*",
+    "canvas": "*",
+    "vulkanmod": "*",
+    "sulkan": "*",
+    "embeddium": "*"
+  },
+  "custom": {
+    "modmenu": {
+      "links": {
+        "modmenu.issues": "https://github.com/csgenos/retina/issues"
+      }
+    }
+  }
+}

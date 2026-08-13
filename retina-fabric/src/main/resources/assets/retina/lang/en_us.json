@@ -1,0 +1,52 @@
+{
+  "retina.name": "Retina",
+
+  "options.retina.shaderPacks": "Shader Packs...",
+  "retina.screen.packs.title": "Retina Shader Packs",
+  "retina.screen.packs.off": "Shaders: Off",
+  "retina.screen.packs.none": "No shader packs found in shaderpacks/",
+  "retina.screen.packs.apply": "Apply",
+  "retina.screen.packs.done": "Done",
+  "retina.screen.packs.refresh": "Refresh",
+  "retina.screen.packs.openFolder": "Open Pack Folder",
+  "retina.screen.packs.settings": "Pack Settings...",
+  "retina.screen.packs.reload": "Reload Pack",
+  "retina.screen.packs.search": "Search",
+
+  "retina.screen.options.title": "%s Settings",
+  "retina.screen.options.reset": "Reset",
+  "retina.screen.options.resetAll": "Reset All",
+  "retina.screen.options.profile": "Profile: %s",
+  "retina.screen.options.custom": "Custom",
+
+  "retina.screen.renderer.title": "Retina Renderer",
+  "retina.screen.renderer.profile": "Renderer Profile",
+  "retina.screen.renderer.profile.compatibility": "Compatibility",
+  "retina.screen.renderer.profile.balanced": "Balanced",
+  "retina.screen.renderer.profile.performance": "Performance",
+  "retina.screen.renderer.profile.debug": "Debug",
+  "retina.screen.renderer.profile.tooltip": "Renderer profiles change engine overhead only. They never reduce what a shader pack asked for.",
+  "retina.screen.renderer.validation": "Vulkan Validation Layers",
+  "retina.screen.renderer.debugOverlay": "Pass Timing Overlay",
+  "retina.screen.renderer.clearCache": "Clear Shader Cache",
+  "retina.screen.renderer.debugBundle": "Save Debug Bundle",
+
+  "retina.status.compiling": "Compiling %s... (%d/%d)",
+  "retina.status.applied": "Applied %s",
+  "retina.status.disabled": "Shaders disabled",
+
+  "retina.error.title": "Shader pack could not be loaded",
+  "retina.error.keptPrevious": "The previously loaded pack is still active.",
+  "retina.error.fellBack": "Shaders have been turned off.",
+  "retina.error.copy": "Copy Details",
+  "retina.error.openLog": "Open Log",
+
+  "retina.warning.unknownDirective": "%d directive(s) in this pack are not implemented by Retina",
+  "retina.warning.budget": "This pack requests %s of video memory",
+
+  "retina.cost.passes": "Active passes: %d",
+  "retina.cost.targets": "Render targets: %d",
+  "retina.cost.shaders": "Compiled shaders: %d",
+  "retina.cost.vram": "Estimated VRAM: %s",
+  "retina.cost.compileTime": "Compile time: %d ms"
+}
