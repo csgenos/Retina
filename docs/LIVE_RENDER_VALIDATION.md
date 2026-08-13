@@ -40,6 +40,13 @@ Validated on 2026-08-13 with Minecraft 26.2, Fabric Loader 0.19.3, Fabric API
     Fabric development-client shader-pack directory. The targeted Fabric test suite remained
     green. `docs/BENCHMARKS.md` now defines the controlled Creative-world setup and metrics;
     no performance sample has been recorded yet.
+12. Gate 1 added and activated `retina_lighting_reference` in the fullscreen `shaderer test`
+    Creative world. It compiled with zero diagnostics, sampled the terrain and standard-entity
+    lightmaps, applied distance fog and day-cycle tint, recorded the existing 1024px terrain
+    shadow map, and presented the scene through `colortex0`/final. The live noon shoreline
+    retained normal daylight, fogged distance, terrain detail, entities, and the player hand
+    after the fullscreen resize. No Retina, pipeline, Mixin, or Vulkan error appeared; offline
+    development-account authentication errors were unrelated.
 
 ## Bugs found by the world tests
 
