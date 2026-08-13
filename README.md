@@ -27,6 +27,10 @@ lighting; it proves renderer stages rather than visual polish.
 - Terrain shadows: `shadow.vsh/fsh`, 128–4096 power-of-two maps, `shadowDistance`, D32 depth,
   two `shadowcolor` outputs, raw `shadowtex1`, and comparison `shadowtex0`/`shadow` sampling.
   Visible Sodium terrain is replayed from a light-space camera into the map.
+- Playable lighting reference: the versioned `retina_lighting_reference` pack combines terrain
+  and entity lightmaps, distance fog, day-cycle tint, and terrain-shadow composition. It is the
+  supported visual baseline while water, AO, clouds, bloom, exposure, and anti-aliasing remain
+  later milestones.
 - Scene routing: with full-resolution `RGBA8_UNORM colortex0`, the main world target is routed
   through the Retina post chain. Sky, clouds, weather, particles, entities, and block entities
   therefore survive final/composite processing; the player hand remains vanilla after final.
@@ -39,9 +43,9 @@ lighting; it proves renderer stages rather than visual polish.
 
 ### Known boundaries
 
-- The current acceptance shader can look fullbright because it deliberately omits a full
-  lightmap/fog/day-night lighting model. That is a pack-quality limitation, not an indication
-  that terrain shadows are absent.
+- `retina_shadow_probe` is intentionally diagnostic and can look fullbright; use
+  `retina_lighting_reference` for the supported visual baseline. Neither pack claims to be a
+  polished replacement for a full visual shader pack.
 - Entity, block-entity, player/hand, and mod-defined pipelines are not all specialized;
   only the standard entity quad family has a dedicated shader path.
 - Only terrain currently casts into shadow maps. Entities and block entities do not yet cast.
@@ -53,14 +57,12 @@ lighting; it proves renderer stages rather than visual polish.
 
 ## Roadmap
 
-1. Establish a normal-lighting reference pack: lightmaps, fog, day/night, sun direction, and
-   terrain-shadow composition that looks like Minecraft rather than a renderer probe.
-2. Add entity shadow casters, then block entities and hand/player handling.
-3. Expand dedicated render-stage programs for block entities, particles, weather, clouds, sky,
+1. Add entity and block-entity shadow casters, then player/hand handling.
+2. Expand dedicated render-stage programs for block entities, particles, weather, clouds, sky,
    and effects.
-4. Implement deferred/prepare/setup/shadowcomp stages and broaden colortex behavior.
-5. Add custom textures/images/samplers and resource-pack texture integration.
-6. Reach Iris-comparable breadth: expand the useful legacy shader-pack surface where it suits
+3. Implement deferred/prepare/setup/shadowcomp stages and broaden colortex behavior.
+4. Add custom textures/images/samplers and resource-pack texture integration.
+5. Reach Iris-comparable breadth: expand the useful legacy shader-pack surface where it suits
    Retina, then add uniforms, expressions, material/entity maps, dimensions, mod support,
    advanced GPU stages, and Distant Horizons through Retina's own contracts.
 

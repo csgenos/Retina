@@ -70,9 +70,13 @@ final class TerrainPackCompilerTest {
         Files.writeString(shaders.resolve("gbuffers_terrain.vsh"), """
             #version 120
             varying vec2 texCoord;
+            varying vec2 lightCoord;
+            varying float fogDistance;
             void main() {
                 gl_Position = ftransform();
                 texCoord = gl_MultiTexCoord0.xy;
+                lightCoord = gl_MultiTexCoord1.xy;
+                fogDistance = length((gl_ModelViewMatrix * gl_Vertex).xyz);
             }
             """);
         Files.writeString(shaders.resolve("gbuffers_terrain.fsh"), """
@@ -80,9 +84,20 @@ final class TerrainPackCompilerTest {
             /* RENDERTARGETS: 0,1 */
             /* const int colortex1Format = RGBA16F; */
             uniform sampler2D texture;
+            uniform sampler2D lightmap;
+            uniform vec3 fogColor;
+            uniform float fogStart;
+            uniform float fogEnd;
+            uniform float sunAngle;
             varying vec2 texCoord;
+            varying vec2 lightCoord;
+            varying float fogDistance;
             void main() {
-                vec4 color = texture2D(texture, texCoord);
+                vec4 color = texture2D(texture, texCoord)
+                    * max(texture2D(lightmap, lightCoord), vec4(0.035));
+                color.rgb = mix(color.rgb, fogColor,
+                    smoothstep(fogStart, fogEnd, fogDistance));
+                color.rgb *= 0.85 + 0.15 * max(cos(sunAngle * 6.2831853), 0.0);
                 gl_FragData[0] = color;
                 gl_FragData[1] = vec4(texCoord, 0.0, 1.0);
             }
@@ -180,6 +195,10 @@ final class TerrainPackCompilerTest {
         assertEquals(dev.retina.core.target.TargetFormat.RGBA16F,
             result.targets().get(1).settings().format());
         assertTrue(result.targets().get(0).settings().mipmap());
+        assertTrue(result.programs().get(PreparedTerrainPack.PassKind.SOLID).fragmentSource()
+            .contains("u_LightTex"));
+        assertTrue(result.programs().get(PreparedTerrainPack.PassKind.SOLID).fragmentSource()
+            .contains("fogColor"));
         assertEquals(512, result.shadowProgram().resolution());
         assertEquals(96.0f, result.shadowProgram().distance());
         assertEquals("gbuffers_entities", result.entityProgram().sourceName());

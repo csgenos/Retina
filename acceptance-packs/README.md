@@ -12,7 +12,9 @@ Fabric development client.
 
 - `retina_shadow_probe`: terrain MRT plus the D32 terrain shadow-map path; its intentionally
   darkened shadow receiver makes shadow lookup visible.
+- `retina_lighting_reference`: a playable baseline using terrain/entity lightmaps, distance
+  fog, day-cycle sun tint, and terrain-shadow composition. It intentionally does not include
+  AO, advanced water, clouds, bloom, exposure, or anti-aliasing; those remain later gates.
 
-The shaders-off baseline is the same named Creative world with no selected Retina pack. Gate 1
-will add a normal-lighting reference pack here; it should replace neither this diagnostic probe
-nor the shaders-off baseline.
+The shaders-off baseline is the same named Creative world with no selected Retina pack. The
+reference pack must not replace either that baseline or the diagnostic probe.

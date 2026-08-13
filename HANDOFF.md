@@ -125,20 +125,25 @@ exist yet; the initial row explicitly records that fact. The client world was le
 after manual camera input, so the documented setup commands are the authority for controlled
 future samples.
 
-1. **Lighting reference pack.** Add a maintainable acceptance/reference pack that combines
-   lightmap input, fog, day/night/sun direction, and terrain-shadow sampling. The current pack
-   intentionally proves the shadow data path but looks fullbright because it does not model the
-   vanilla lighting stack.
-2. **Entity shadow casters.** Record/replay compatible entity draw data from the standard
+Gate 1 is complete: `retina_lighting_reference` is a tracked, versioned baseline pack. It uses
+the existing terrain lightmap UV/sampler, fog color/range, and day-cycle `sunAngle` uniform—no
+new renderer ABI was necessary. Its terrain shader writes color and shadow clip data to the
+existing two-target MRT; final applies terrain shadows. Its standard entity shader uses the
+vanilla lightmap sampler. The live fullscreen Creative-world run activated it transactionally,
+routed the normal scene through `colortex0`, recorded the 1024px terrain shadow map, and logged
+the standard entity path with no Retina, pipeline, Mixin, or Vulkan error. The only client log
+errors were expected offline development-account authentication failures.
+
+1. **Entity shadow casters.** Record/replay compatible entity draw data from the standard
    entity pipeline into the shadow pass. Keep non-standard entity, armor, item, eye, and mod
    pipelines on the fallback path until their vertex and bind-group ABIs are independently
    validated. Then repeat for block entities and player/hand rendering.
-3. **Dedicated scene stages.** Move from scene-target preservation to real shader-pack stages
+2. **Dedicated scene stages.** Move from scene-target preservation to real shader-pack stages
    for block entities, particles, weather, clouds, sky, and effects, each with declared ordering
    and a separate compatibility boundary.
-4. **Pipeline breadth.** Connect `prepare`, `deferred`, `setup`, and `shadowcomp`; expand
+3. **Pipeline breadth.** Connect `prepare`, `deferred`, `setup`, and `shadowcomp`; expand
    ping-pong, target scaling/resizing, and attachment behavior only with live GPU tests.
-5. **Resources and ecosystem.** Add pack textures/images/samplers, resource-pack texture
+4. **Resources and ecosystem.** Add pack textures/images/samplers, resource-pack texture
    access, Retina's own broad uniform/expression/material/entity contracts, dimensions, mod
    compatibility, and finally compute/SSBO/geometry/tessellation and Distant Horizons. Adopt
    useful legacy shader conventions selectively; do not frame this as an Iris clone or promise
