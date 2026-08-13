@@ -78,6 +78,14 @@ tasks.test {
     useJUnitPlatform()
 }
 
+// Source acceptance packs are versioned at the repository root; the development client reads
+// from its ignored run directory. Keep copying explicit so normal client runs never overwrite a
+// locally edited probe.
+tasks.register<Copy>("syncAcceptancePacks") {
+    from(rootProject.layout.projectDirectory.dir("acceptance-packs"))
+    into(layout.projectDirectory.dir("run/shaderpacks"))
+}
+
 tasks.processResources {
     val properties = mapOf(
         "version" to project.version,

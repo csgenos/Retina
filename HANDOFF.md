@@ -118,6 +118,13 @@ changing pack semantics.
 
 ## Next roadmap
 
+Gate 0 is complete: `acceptance-packs/retina_shadow_probe` is a tracked source fixture,
+`:retina-fabric:syncAcceptancePacks` copies it to the ignored development client directory, and
+`docs/BENCHMARKS.md` defines the fixed-world commands and required metrics. No benchmark values
+exist yet; the initial row explicitly records that fact. The client world was left untouched
+after manual camera input, so the documented setup commands are the authority for controlled
+future samples.
+
 1. **Lighting reference pack.** Add a maintainable acceptance/reference pack that combines
    lightmap input, fog, day/night/sun direction, and terrain-shadow sampling. The current pack
    intentionally proves the shadow data path but looks fullbright because it does not model the
