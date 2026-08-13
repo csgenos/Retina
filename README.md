@@ -37,6 +37,10 @@ lighting; it proves renderer stages rather than visual polish.
 - Basic entity shaders: `gbuffers_entities.vsh/fsh` runs for the normal Minecraft
   `pipeline/entity_*` quad family, with the vanilla transform, fog, lighting, `Sampler0`, and
   `Sampler2` ABI. Unsupported entity pipeline families fall back safely to vanilla.
+- Standard entity-format shadow casters: Retina records the original indexed buffers, dynamic
+  transform UBO, and atlas binding, then replays compatible `pipeline/entity_*` draws into the
+  terrain shadow map with alpha testing. This also covers a block entity when its renderer uses
+  that same standard ABI; it does not claim support for custom block-entity formats.
 - Release harness: checked-in diagnostic acceptance packs, an explicit development-client sync
   task, and a fixed-scene benchmark protocol. These measure regressions; they do not make a
   performance claim against other renderers.
@@ -46,9 +50,9 @@ lighting; it proves renderer stages rather than visual polish.
 - `retina_shadow_probe` is intentionally diagnostic and can look fullbright; use
   `retina_lighting_reference` for the supported visual baseline. Neither pack claims to be a
   polished replacement for a full visual shader pack.
-- Entity, block-entity, player/hand, and mod-defined pipelines are not all specialized;
-  only the standard entity quad family has a dedicated shader path.
-- Only terrain currently casts into shadow maps. Entities and block entities do not yet cast.
+- Entity, block-entity, player/hand, and mod-defined pipelines are not all specialized. Shadow
+  casting is intentionally limited to the standard entity quad ABI; armor, eyes, items, player
+  hand, custom block entities, and mod-defined formats remain excluded.
 - Deferred, `prepare`, `setup`, `shadowcomp`, compute/SSBO, geometry/tessellation, custom pack
   textures/images, resource-pack texture access, dimensions, Distant Horizons, and most of the
   Iris `shaders.properties` expression ecosystem are not live yet.
@@ -57,8 +61,9 @@ lighting; it proves renderer stages rather than visual polish.
 
 ## Roadmap
 
-1. Add entity and block-entity shadow casters, then player/hand handling.
-2. Expand dedicated render-stage programs for block entities, particles, weather, clouds, sky,
+1. Add dedicated block-entity and player/hand paths, then safely broaden shadow casters beyond
+   the standard entity quad ABI.
+2. Expand dedicated render-stage programs for particles, weather, clouds, sky,
    and effects.
 3. Implement deferred/prepare/setup/shadowcomp stages and broaden colortex behavior.
 4. Add custom textures/images/samplers and resource-pack texture integration.
