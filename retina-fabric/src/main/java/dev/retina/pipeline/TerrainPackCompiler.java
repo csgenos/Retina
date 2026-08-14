@@ -29,6 +29,7 @@ import dev.retina.core.uniform.UniformSchema;
 import dev.retina.render.TerrainShaderAdapter;
 import dev.retina.render.FullscreenShaderAdapter;
 import dev.retina.render.EntityShaderAdapter;
+import dev.retina.render.ParticleShaderAdapter;
 import dev.retina.render.TerrainUniformLayout;
 
 import java.io.IOException;
@@ -83,6 +84,10 @@ public final class TerrainPackCompiler {
 
     private record TranslatedEntity(String sourceName, TranslatedSource vertex,
                                    TranslatedSource fragment, boolean cull) {
+    }
+
+    private record TranslatedParticle(String sourceName, TranslatedSource vertex,
+                                      TranslatedSource fragment, boolean cull) {
     }
 
     private static final Pattern CONST_DIRECTIVE = Pattern.compile(
@@ -145,6 +150,8 @@ public final class TerrainPackCompiler {
         TranslatedShadow translatedShadow = translateOptionalShadow(preprocessor, optionApplier,
             source, shadersRoot, details, translator, targetDirectives, diagnostics);
         TranslatedEntity translatedEntity = translateOptionalEntity(preprocessor, optionApplier,
+            source, shadersRoot, details, translator, targetDirectives, diagnostics);
+        TranslatedParticle translatedParticle = translateOptionalParticle(preprocessor, optionApplier,
             source, shadersRoot, details, translator, targetDirectives, diagnostics);
 
         Map<String, RenderTargetDirectives.PassScale> scales =
@@ -210,6 +217,8 @@ public final class TerrainPackCompiler {
                 : adaptShadow(compiler, translatedShadow, targetDirectives, uniforms, optimisation);
             PreparedTerrainPack.EntityProgram entityProgram = translatedEntity == null ? null
                 : adaptEntity(compiler, translatedEntity, optimisation);
+            PreparedTerrainPack.ParticleProgram particleProgram = translatedParticle == null ? null
+                : adaptParticle(compiler, translatedParticle, optimisation);
             List<PreparedTerrainPack.PostProgram> compositePrograms = new ArrayList<>();
             for (TranslatedPost post : postPrograms) {
                 compositePrograms.add(adaptPost(compiler, post, uniforms, optimisation));
@@ -230,6 +239,7 @@ public final class TerrainPackCompiler {
                 referencedTargets, targetDirectives, details, programs, compositePrograms);
             diagnostics.addAll(targetDirectives.problems());
             return new PreparedTerrainPack(packName, details.contentHash(), programs, entityProgram,
+                particleProgram,
                 shadowProgram, compositePrograms, finalProgram, targets, uniforms, diagnostics);
         }
     }
@@ -285,6 +295,59 @@ public final class TerrainPackCompiler {
         boolean cull = details.properties().programOverrides().backFaceCulling()
             .getOrDefault("entities", false);
         return new TranslatedEntity(name, vertex, fragment, cull);
+    }
+
+    /** Translates an optional particle program against Minecraft's particle quad ABI. */
+    private static TranslatedParticle translateOptionalParticle(ShaderPreprocessor preprocessor,
+        OptionApplier optionApplier, PackSource source, PackPath shadersRoot,
+        PackManager.PackDetails details, VulkanTranslator translator,
+        RenderTargetDirectives targets, List<String> diagnostics)
+        throws IOException, CompilationException {
+        String name = ProgramId.GBUFFERS_PARTICLES.sourceName();
+        PackPath vertexPath = shadersRoot.resolve(name + ".vsh");
+        PackPath fragmentPath = shadersRoot.resolve(name + ".fsh");
+        boolean hasVertex = source.readText(vertexPath).isPresent();
+        boolean hasFragment = source.readText(fragmentPath).isPresent();
+        if (!hasVertex && !hasFragment) {
+            return null;
+        }
+        if (!hasVertex || !hasFragment) {
+            throw new CompilationException(name + " must supply both .vsh and .fsh");
+        }
+        PreprocessedSource vertexPreprocessed = preprocessor.process(vertexPath, DEFINES,
+            optionApplier);
+        PreprocessedSource fragmentPreprocessed = preprocessor.process(fragmentPath, DEFINES,
+            optionApplier);
+        applyTargetDirectives(targets, vertexPreprocessed.text());
+        applyTargetDirectives(targets, fragmentPreprocessed.text());
+        DrawBuffersDirective.Result found = DrawBuffersDirective.find(
+            GlslLexer.tokenize(fragmentPreprocessed.text()));
+        diagnostics.addAll(found.problems());
+        DrawBuffersDirective drawBuffers = found.directive();
+        if (!drawBuffers.targets().equals(List.of(0))) {
+            throw new CompilationException(name + " currently supports only RENDERTARGETS: 0; "
+                + "particle MRT requires dedicated draw routing");
+        }
+        List<VaryingLayout.Declaration> declarations = new ArrayList<>();
+        declarations.addAll(VulkanTranslator.collectVaryings(vertexPreprocessed.text(),
+            ShaderStage.VERTEX));
+        declarations.addAll(VulkanTranslator.collectVaryings(fragmentPreprocessed.text(),
+            ShaderStage.FRAGMENT));
+        VaryingLayout.Build varying = VaryingLayout.build(declarations);
+        diagnostics.addAll(varying.problems());
+        TranslatedSource vertex = translator.translate(vertexPreprocessed.text(),
+            new VulkanTranslator.Options(ShaderStage.VERTEX, drawBuffers, AlphaTest.ALWAYS,
+                false, 450, varying.layout()));
+        TranslatedSource fragment = translator.translate(fragmentPreprocessed.text(),
+            new VulkanTranslator.Options(ShaderStage.FRAGMENT, drawBuffers,
+                details.properties().programOverrides().alphaTest().getOrDefault(name,
+                    AlphaTest.VANILLA_CUTOUT), false, 450, varying.layout()));
+        diagnostics.addAll(vertex.warnings());
+        diagnostics.addAll(fragment.warnings());
+        rejectUnboundResources(name, vertex, fragment);
+        boolean cull = details.properties().programOverrides().backFaceCulling()
+            .getOrDefault("particles", false);
+        return new TranslatedParticle(name, vertex, fragment, cull);
     }
 
     private static TranslatedShadow translateOptionalShadow(ShaderPreprocessor preprocessor,
@@ -569,6 +632,26 @@ public final class TerrainPackCompiler {
             optimisation);
         return new PreparedTerrainPack.EntityProgram(entity.sourceName(), vertex, fragment,
             entity.cull());
+    }
+
+    private static PreparedTerrainPack.ParticleProgram adaptParticle(SpirvCompiler compiler,
+        TranslatedParticle particle, SpirvCompiler.Optimisation optimisation)
+        throws CompilationException {
+        String vertex;
+        String fragment;
+        try {
+            vertex = ParticleShaderAdapter.adapt(particle.vertex(), true);
+            fragment = ParticleShaderAdapter.adapt(particle.fragment(), false);
+        } catch (IllegalArgumentException e) {
+            throw new CompilationException(particle.sourceName() + " cannot use Minecraft's "
+                + "particle ABI: " + e.getMessage(), e);
+        }
+        validate(compiler, particle.sourceName() + ".vsh", vertex, ShaderStage.VERTEX,
+            optimisation);
+        validate(compiler, particle.sourceName() + ".fsh", fragment, ShaderStage.FRAGMENT,
+            optimisation);
+        return new PreparedTerrainPack.ParticleProgram(particle.sourceName(), vertex, fragment,
+            particle.cull());
     }
 
     private static Map<String, String> postSamplers(String program, TranslatedSource... stages)

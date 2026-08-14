@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Switches only compatible vanilla entity draws to the active pack's entity pipeline. */
+/** Switches only ABI-validated vanilla scene stages to their active pack pipelines. */
 @Mixin(RenderPass.class)
 public abstract class RenderPassMixin {
     @Inject(method = "setPipeline", at = @At("HEAD"))
@@ -60,6 +60,6 @@ public abstract class RenderPassMixin {
         target = "Lcom/mojang/blaze3d/systems/RenderPassBackend;setPipeline("
             + "Lcom/mojang/blaze3d/pipeline/RenderPipeline;)V"))
     private RenderPipeline retina$replaceEntityPipeline(RenderPipeline original) {
-        return ShaderRuntime.get().entityPipelineFor(original);
+        return ShaderRuntime.get().scenePipelineFor(original);
     }
 }

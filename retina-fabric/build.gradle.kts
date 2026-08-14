@@ -86,6 +86,12 @@ tasks.register<Copy>("syncAcceptancePacks") {
     into(layout.projectDirectory.dir("run/shaderpacks"))
 }
 
+// The development client consumes the copied packs directly. Declare that relationship so a
+// one-command live run is deterministic under Gradle's task-output validation.
+tasks.named("runClient") {
+    dependsOn("syncAcceptancePacks")
+}
+
 tasks.processResources {
     val properties = mapOf(
         "version" to project.version,

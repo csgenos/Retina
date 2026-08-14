@@ -62,6 +62,7 @@ public enum ProgramId {
     GBUFFERS_ENTITIES_TRANSLUCENT("gbuffers_entities_translucent", GBUFFERS_ENTITIES,
         Stage.GEOMETRY),
     GBUFFERS_ENTITIES_GLOWING("gbuffers_entities_glowing", GBUFFERS_ENTITIES, Stage.GEOMETRY),
+    GBUFFERS_PARTICLES("gbuffers_particles", GBUFFERS_TEXTURED_LIT, Stage.GEOMETRY),
     GBUFFERS_ARMOR_GLINT("gbuffers_armor_glint", GBUFFERS_TEXTURED, Stage.GEOMETRY),
     GBUFFERS_SPIDEREYES("gbuffers_spidereyes", GBUFFERS_TEXTURED, Stage.GEOMETRY),
     GBUFFERS_HAND("gbuffers_hand", GBUFFERS_TEXTURED_LIT, Stage.GEOMETRY),
