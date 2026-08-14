@@ -1068,19 +1068,31 @@ public final class ShaderRuntime {
         if (flatPbrSampler != null) {
             return;
         }
+        // Every existing clearColorTexture caller (ColortexFramebuffer, ShadowFramebuffer)
+        // clears a texture created with USAGE_RENDER_ATTACHMENT; omitting it here rejected the
+        // clear outright.
+        int usage = GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_TEXTURE_BINDING
+            | GpuTexture.USAGE_RENDER_ATTACHMENT;
+        GpuTexture normalsTexture = RenderSystem.getDevice().createTexture("Retina flat normals",
+            usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+        GpuTextureView normalsView = RenderSystem.getDevice().createTextureView(normalsTexture);
+        GpuTexture specularTexture = RenderSystem.getDevice().createTexture("Retina flat specular",
+            usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+        GpuTextureView specularView = RenderSystem.getDevice().createTextureView(specularTexture);
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        encoder.clearColorTexture(normalsTexture, new Vector4f(0.5f, 0.5f, 1.0f, 1.0f));
+        encoder.clearColorTexture(specularTexture, new Vector4f(0.0f, 0.0f, 0.0f, 0.0f));
+        // Assigned only once everything above has succeeded: flatPbrSampler is the guard this
+        // method checks on entry, so setting it any earlier would make a failure partway through
+        // permanent -- every later call would see initialization as already done and skip it,
+        // leaving these textures bound with undefined contents for the rest of the session.
+        flatNormalsTexture = normalsTexture;
+        flatNormalsView = normalsView;
+        flatSpecularTexture = specularTexture;
+        flatSpecularView = specularView;
         flatPbrSampler = RenderSystem.getDevice().createSampler(
             AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
             FilterMode.NEAREST, FilterMode.NEAREST, 1, OptionalDouble.of(0.0));
-        int usage = GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_TEXTURE_BINDING;
-        flatNormalsTexture = RenderSystem.getDevice().createTexture("Retina flat normals",
-            usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
-        flatNormalsView = RenderSystem.getDevice().createTextureView(flatNormalsTexture);
-        flatSpecularTexture = RenderSystem.getDevice().createTexture("Retina flat specular",
-            usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
-        flatSpecularView = RenderSystem.getDevice().createTextureView(flatSpecularTexture);
-        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        encoder.clearColorTexture(flatNormalsTexture, new Vector4f(0.5f, 0.5f, 1.0f, 1.0f));
-        encoder.clearColorTexture(flatSpecularTexture, new Vector4f(0.0f, 0.0f, 0.0f, 0.0f));
     }
 
     /**
