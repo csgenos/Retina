@@ -87,6 +87,8 @@ public final class ShaderRuntime {
                               RenderPipeline entityPipeline,
                               RenderPipeline opaqueParticlePipeline,
                               RenderPipeline translucentParticlePipeline,
+                              RenderPipeline weatherDepthWritePipeline,
+                              RenderPipeline weatherNoDepthWritePipeline,
                               RenderPipeline shadowPipeline,
                               RenderPipeline entityShadowPipeline,
                               Map<PreparedTerrainPack.PostProgram, RenderPipeline> postPipelines,
@@ -295,6 +297,22 @@ public final class ShaderRuntime {
                 sources.put(opaqueParticlePipeline, opaqueSource);
                 sources.put(translucentParticlePipeline, translucentSource);
             }
+            RenderPipeline weatherDepthWritePipeline = null;
+            RenderPipeline weatherNoDepthWritePipeline = null;
+            if (prepared.weatherProgram() != null) {
+                weatherDepthWritePipeline = buildWeatherPipeline(prepared, prepared.weatherProgram(), true);
+                weatherNoDepthWritePipeline = buildWeatherPipeline(prepared, prepared.weatherProgram(), false);
+                ShaderSource depthWriteSource = shaderSource(weatherDepthWritePipeline,
+                    prepared.weatherProgram());
+                ShaderSource noDepthWriteSource = shaderSource(weatherNoDepthWritePipeline,
+                    prepared.weatherProgram());
+                precompile(prepared.weatherProgram().sourceName() + " depth write",
+                    weatherDepthWritePipeline, depthWriteSource);
+                precompile(prepared.weatherProgram().sourceName() + " no depth write",
+                    weatherNoDepthWritePipeline, noDepthWriteSource);
+                sources.put(weatherDepthWritePipeline, depthWriteSource);
+                sources.put(weatherNoDepthWritePipeline, noDepthWriteSource);
+            }
             RenderPipeline entityShadowPipeline = null;
             if (prepared.shadowProgram() != null && prepared.entityProgram() != null) {
                 entityShadowPipeline = buildEntityShadowPipeline(prepared, prepared.shadowProgram());
@@ -354,6 +372,7 @@ public final class ShaderRuntime {
             ActivePack previous = active;
             active = new ActivePack(prepared, Map.copyOf(pipelines), entityPipeline,
                 opaqueParticlePipeline, translucentParticlePipeline,
+                weatherDepthWritePipeline, weatherNoDepthWritePipeline,
                 shadowPipeline, entityShadowPipeline, Map.copyOf(postPipelines), Map.copyOf(sources), storage,
                 framebuffer, shadowFramebuffer);
             if (previous != null) {
@@ -388,9 +407,10 @@ public final class ShaderRuntime {
                 ? "Vulkan terrain MRT + composite/final active"
                 : "Vulkan terrain pipelines active";
             status = new Status(State.ACTIVE, prepared.name(), detail);
-            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, particles={}, shadow={}, {} prepare, {} shadowcomp, {} deferred, {} composite/final pipelines, {} targets,"
+            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, particles={}, weather={}, shadow={}, {} prepare, {} shadowcomp, {} deferred, {} composite/final pipelines, {} targets,"
                     + " {} diagnostics)", prepared.name(), pipelines.size(),
-                entityPipeline != null, opaqueParticlePipeline != null, shadowPipeline != null,
+                entityPipeline != null, opaqueParticlePipeline != null,
+                weatherDepthWritePipeline != null, shadowPipeline != null,
                 prepared.preparePrograms().size(), prepared.shadowCompPrograms().size(),
                 prepared.deferredPrograms().size(), postPipelines.size(), prepared.targets().size(),
                 prepared.diagnostics().size());
@@ -571,6 +591,32 @@ public final class ShaderRuntime {
             .build();
     }
 
+    /** Weather uses the particle vertex ABI but preserves Minecraft's two depth-write modes. */
+    private static RenderPipeline buildWeatherPipeline(PreparedTerrainPack pack,
+        PreparedTerrainPack.WeatherProgram program, boolean depthWrite) {
+        String suffix = pack.contentHash().substring(0,
+            Math.min(12, pack.contentHash().length())) + "/weather/"
+            + (depthWrite ? "depth-write" : "no-depth-write");
+        Identifier shader = Identifier.fromNamespaceAndPath("retina", suffix);
+        return RenderPipeline.builder()
+            .withBindGroupLayout(BindGroupLayouts.GLOBALS)
+            .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+            .withBindGroupLayout(BindGroupLayouts.FOG)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER2)
+            .withLocation(Identifier.fromNamespaceAndPath("retina", suffix))
+            .withVertexShader(shader)
+            .withFragmentShader(shader)
+            .withCull(program.cull())
+            .withDepthStencilState(depthWrite ? DepthStencilState.DEFAULT
+                : new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, false))
+            .withPrimitiveTopology(PrimitiveTopology.QUADS)
+            .withVertexBinding(0, DefaultVertexFormat.PARTICLE)
+            .withColorTargetState(new ColorTargetState(Optional.of(BlendFunction.TRANSLUCENT),
+                com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, -1))
+            .build();
+    }
+
     private static void precompile(String name, RenderPipeline pipeline, ShaderSource source) {
         CompiledRenderPipeline compiled = RenderSystem.getDevice()
             .precompilePipeline(pipeline, source);
@@ -621,6 +667,16 @@ public final class ShaderRuntime {
 
     private static ShaderSource shaderSource(RenderPipeline pipeline,
                                              PreparedTerrainPack.ParticleProgram program) {
+        return (id, type) -> {
+            if (!id.equals(pipeline.getVertexShader()) && !id.equals(pipeline.getFragmentShader())) {
+                return null;
+            }
+            return type == ShaderType.VERTEX ? program.vertexSource() : program.fragmentSource();
+        };
+    }
+
+    private static ShaderSource shaderSource(RenderPipeline pipeline,
+                                             PreparedTerrainPack.WeatherProgram program) {
         return (id, type) -> {
             if (!id.equals(pipeline.getVertexShader()) && !id.equals(pipeline.getFragmentShader())) {
                 return null;
@@ -720,6 +776,13 @@ public final class ShaderRuntime {
         }
         String path = original.getLocation().getPath();
         if (original.getVertexFormatBinding(0) == DefaultVertexFormat.PARTICLE) {
+            if (path.equals("pipeline/weather_depth_write") && current.weatherDepthWritePipeline() != null) {
+                return current.weatherDepthWritePipeline();
+            }
+            if (path.equals("pipeline/weather_no_depth_write")
+                && current.weatherNoDepthWritePipeline() != null) {
+                return current.weatherNoDepthWritePipeline();
+            }
             if (path.equals("pipeline/opaque_particle") && current.opaqueParticlePipeline() != null) {
                 return current.opaqueParticlePipeline();
             }

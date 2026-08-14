@@ -117,8 +117,13 @@ uses this independently validated standard ABI.
 `DefaultVertexFormat.PARTICLE` (`Position`, `UV0`, `Color`, `UV2`) and retains Minecraft's
 native dynamic-transform, projection, fog, particle-texture (`Sampler0`), and lightmap
 (`Sampler2`) bindings. The runtime precompiles distinct opaque and translucent pipelines so
-the latter preserves vanilla alpha blending. Weather uses a related but different pipeline
-contract and remains safely vanilla until it has its own stage.
+the latter preserves vanilla alpha blending. Weather uses a related but distinct pipeline
+contract and is routed only through its separately validated stage.
+
+`gbuffers_weather.vsh/fsh` now routes the dedicated weather depth-write and no-depth-write
+particle-format pipelines. It shares the validated particle ABI but always preserves Minecraft's
+translucent blend mode and the original depth-write distinction; rain/snow visual quality still
+needs an in-world probe.
 
 Numbered `deferred.vsh/fsh`, `deferred1`, and so on are now live fullscreen stages. They use
 the same validated colortex sampler, target-scale, flip, mipmap, and ping-pong machinery as

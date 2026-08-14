@@ -74,6 +74,9 @@ Validated on 2026-08-13 with Minecraft 26.2, Fabric Loader 0.19.3, Fabric API
     backend with `1 prepare`, `1 shadowcomp`, and `1 deferred`, all at zero diagnostics. The
     client was closed immediately after activation. This proves transactional translation and
     precompilation, not an in-world shadowcomp visual probe.
+18. The dedicated weather shader program compiled through the Fabric suite and the expanded
+    reference pack activated on Vulkan with zero diagnostics. The client was closed immediately
+    after the activation check; in-world rain/snow coverage is still pending.
 
 ## Bugs found by the world tests
 
