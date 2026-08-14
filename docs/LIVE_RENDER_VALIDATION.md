@@ -77,6 +77,9 @@ Validated on 2026-08-13 with Minecraft 26.2, Fabric Loader 0.19.3, Fabric API
 18. The dedicated weather shader program compiled through the Fabric suite and the expanded
     reference pack activated on Vulkan with zero diagnostics. The client was closed immediately
     after the activation check; in-world rain/snow coverage is still pending.
+19. The renderer-owned underwater depth-sampler pipeline precompiled during Vulkan activation
+    with zero diagnostics. The test client was closed immediately; an in-world underwater
+    shoreline screenshot remains required before accepting the visual behavior.
 
 ## Bugs found by the world tests
 

@@ -31,6 +31,10 @@ lighting; it proves renderer stages rather than visual polish.
 - Shadow composition: numbered `shadowcomp` passes run after terrain/entity shadow replay and
   before deferred. They can sample `shadowtex0`, `shadowtex1`, `shadow`, and `shadowcolor*`, then
   write through normal colortex targets. Native shadowcolor-attachment output remains later work.
+- Underwater medium: while Minecraft reports a submerged water camera, Retina applies a
+  depth-aware full-scene attenuation pass before deferred/composite/final. It preserves nearby
+  detail while suppressing distant above-water scenery; pack-specific water stylisation remains
+  later work.
 - Terrain shadows: `shadow.vsh/fsh`, 128–4096 power-of-two maps, `shadowDistance`, D32 depth,
   two `shadowcolor` outputs, raw `shadowtex1`, and comparison `shadowtex0`/`shadow` sampling.
   Visible Sodium terrain is replayed from a light-space camera into the map.

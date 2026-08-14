@@ -125,6 +125,12 @@ particle-format pipelines. It shares the validated particle ABI but always prese
 translucent blend mode and the original depth-write distinction; rain/snow visual quality still
 needs an in-world probe.
 
+Retina now captures Minecraft's authoritative `Camera.getFluidInCamera()` result and, for
+`WATER`, composites the completed scene against the main D32 depth target before deferred. The
+renderer-owned pass uses reversed-Z depth to retain nearby detail while attenuating distant scene
+colour. It is activation-tested only; capture the underwater shoreline acceptance screenshot
+before claiming visual parity.
+
 Numbered `deferred.vsh/fsh`, `deferred1`, and so on are now live fullscreen stages. They use
 the same validated colortex sampler, target-scale, flip, mipmap, and ping-pong machinery as
 composite programs, but execute first at the end of the assembled LevelRenderer world scene.
