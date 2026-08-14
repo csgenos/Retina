@@ -85,10 +85,13 @@ public final class EntityShaderAdapter {
             .replace("retina_ProjectionMatrix", "ProjMat")
             .replace("retina_NormalMatrix", "mat3(ModelViewMat)")
             // Entity programs use Minecraft's existing Fog bind group rather than Retina's
-            // terrain UBO. Preserve the common legacy names against that native ABI.
+            // terrain UBO. Legacy packs expose just one fog interval while Minecraft supplies
+            // separate environmental and render-distance intervals. Taking the nearer range
+            // preserves underwater/environment fog and prevents distant entities from escaping
+            // the render-distance fade.
             .replace("fogColor", "FogColor.rgb")
-            .replace("fogStart", "FogEnvironmentalStart")
-            .replace("fogEnd", "FogEnvironmentalEnd");
+            .replace("fogStart", "min(FogEnvironmentalStart, FogRenderDistanceStart)")
+            .replace("fogEnd", "min(FogEnvironmentalEnd, FogRenderDistanceEnd)");
         if (!vertex) {
             return source;
         }

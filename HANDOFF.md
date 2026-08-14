@@ -112,6 +112,11 @@ map with their original `DynamicTransforms` slice and `Sampler0` atlas. The repl
 the pack's shadow matrices and alpha-discard; a block entity is therefore covered only when it
 uses this independently validated standard ABI.
 
+Legacy entity, particle, and weather shaders expose only one `fogStart`/`fogEnd` pair, whereas
+Minecraft provides both environmental and render-distance intervals. Their adapters now map that
+pair to the nearer native interval. This intentionally favors a conservative fade: a distant
+entity, particle, or weather quad cannot remain visible after terrain has reached its fog limit.
+
 `gbuffers_particles.vsh/fsh` is supported for precisely `pipeline/opaque_particle` and
 `pipeline/translucent_particle`. `ParticleShaderAdapter` maps legacy attributes onto
 `DefaultVertexFormat.PARTICLE` (`Position`, `UV0`, `Color`, `UV2`) and retains Minecraft's

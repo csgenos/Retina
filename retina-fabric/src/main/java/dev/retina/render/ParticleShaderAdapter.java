@@ -81,9 +81,12 @@ public final class ParticleShaderAdapter {
             .replace("retina_ProjectionMatrixInverse", "inverse(ProjMat)")
             .replace("retina_ProjectionMatrix", "ProjMat")
             .replace("retina_NormalMatrix", "mat3(ModelViewMat)")
+            // Match the terrain cutoff as well as Minecraft's environmental medium fog. The
+            // nearest interval is the only safe representation for a legacy shader's single
+            // fogStart/fogEnd pair, and keeps particles/weather from poking through distance fog.
             .replace("fogColor", "FogColor.rgb")
-            .replace("fogStart", "FogEnvironmentalStart")
-            .replace("fogEnd", "FogEnvironmentalEnd");
+            .replace("fogStart", "min(FogEnvironmentalStart, FogRenderDistanceStart)")
+            .replace("fogEnd", "min(FogEnvironmentalEnd, FogRenderDistanceEnd)");
         if (!vertex) {
             return source;
         }
