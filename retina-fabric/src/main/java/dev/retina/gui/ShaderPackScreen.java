@@ -62,7 +62,6 @@ public final class ShaderPackScreen extends Screen {
 
         list = new PackList(width, height - 56 - 60, 56, 24);
         addRenderableWidget(list);
-        refresh();
 
         int row = height - 52;
         addRenderableWidget(Button.builder(
@@ -83,7 +82,11 @@ public final class ShaderPackScreen extends Screen {
                 b -> onClose())
             .bounds(width / 2 - 100, height - 28, 200, 20).build());
 
-        updateButtons();
+        // Populates the list and derives button enablement/labels from it. Must run last:
+        // it reads settingsButton and applyButton, which this method builds above. Screens
+        // rebuild their whole widget tree on every window resize by calling init() again, so
+        // this ordering has to hold on every call, not just the first.
+        refresh();
     }
 
     private void refresh() {
