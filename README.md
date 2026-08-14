@@ -21,6 +21,13 @@ parallel-compilation settings. This also works with clients that replace vanilla
 including Lunar's Sodium screen. The ordinary Minecraft Video Settings button remains as a
 fallback when Sodium's screen is not in use.
 
+## Continuous builds
+
+GitHub Actions validates every pull request and every push to `main`, then keeps
+the built Fabric mod JAR as a downloadable workflow artifact for 30 days. This
+is a CI build for testing; it does not automatically create a GitHub release or
+publish to Modrinth or CurseForge.
+
 ## Current status
 
 Retina is an early, working Vulkan-native shader renderer—not yet an Iris-comparable release.
