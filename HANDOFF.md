@@ -130,8 +130,14 @@ Numbered `prepare.vsh/fsh`, `prepare1`, and so on share the same target and samp
 They execute once after Retina has a valid Sodium camera/fog uniform slice and immediately before
 the first terrain invocation. This is a deliberate early-world compatibility boundary, not a
 claim that prepare runs before every vanilla sky/cloud/world feature. The supplied reference
-pass is neutral and compiler-tested; its next live activation should be recorded before claiming
-GPU validation.
+  pass is neutral and compiler-tested; its next live activation should be recorded before claiming
+  GPU validation.
+
+Numbered `shadowcomp.vsh/fsh`, `shadowcomp1`, and so on are live as post-shadow colortex stages.
+They require an active `shadow.vsh/fsh` pass, execute once after terrain and compatible entity
+shadow replay, and may sample `shadowtex0`, `shadowtex1`, `shadow`, or `shadowcolor*`. Their
+outputs use the existing colortex target contract; this does not yet implement native
+shadowcolor-attachment output or the full historical shadowcomp framebuffer semantics.
 
 When `colortex0` is a full-resolution `RGBA8_UNORM` target (the default), Retina temporarily
 routes Minecraft's main world target there for the LevelRenderer frame. Sky, clouds, weather,
@@ -210,13 +216,20 @@ prevents duplicate execution across Sodium terrain layers and prevents prepare f
 targets during shadow replay. The Fabric suite validates the reference program; do not yet mark
 this slice as live-activated until the current client is restarted.
 
+The third Gate 4 slice adds `shadowcomp` through `shadowcomp99`. The compiler refuses the stage
+without an active shadow program, validates it transactionally, and includes its sampler/target
+references in allocation planning. The runtime precompiles it at activation and executes it once
+after shadow replay with the normal scene uniform slice, before deferred/composite/final. The
+reference pack activated on AMD Vulkan with `1 shadowcomp` and zero diagnostics; the test client
+was then closed. A visible in-world probe and native shadowcolor outputs remain future work.
+
 1. **Dedicated block entities and player/hand.** Add separately validated vertex/bind-group
    paths before claiming coverage for non-standard block entities, armor, items, eyes, or the
    player hand. Preserve the current safe exclusion for mod-defined formats.
 2. **Dedicated scene stages.** Validate the particle baseline in-world, then add weather,
    clouds, sky, and effects with declared ordering and a separate compatibility boundary.
-3. **Pipeline breadth.** Validate deferred and prepare in-world, then connect `setup` and
-   `shadowcomp`; expand
+3. **Pipeline breadth.** Validate deferred, prepare, and shadowcomp in-world, then connect
+   `setup` and native shadowcolor processing; expand
    ping-pong, target scaling/resizing, and attachment behavior only with live GPU tests.
 4. **Resources and ecosystem.** Add pack textures/images/samplers, resource-pack texture
    access, Retina's own broad uniform/expression/material/entity contracts, dimensions, mod

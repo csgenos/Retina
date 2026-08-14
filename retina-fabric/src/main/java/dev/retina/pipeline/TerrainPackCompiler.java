@@ -166,6 +166,19 @@ public final class TerrainPackCompiler {
                 preparePrograms.add(post);
             }
         }
+        List<TranslatedPost> shadowCompPrograms = new ArrayList<>();
+        for (int index = 0; index < 100; index++) {
+            String name = index == 0 ? "shadowcomp" : "shadowcomp" + index;
+            TranslatedPost post = translateOptionalPost(name, false, preprocessor,
+                optionApplier, source, shadersRoot, details, translator, targetDirectives,
+                scales, diagnostics);
+            if (post != null) {
+                shadowCompPrograms.add(post);
+            }
+        }
+        if (!shadowCompPrograms.isEmpty() && translatedShadow == null) {
+            throw new CompilationException("shadowcomp requires an active shadow.vsh/shadow.fsh pass");
+        }
         List<TranslatedPost> deferredPrograms = new ArrayList<>();
         for (int index = 0; index < 100; index++) {
             String name = index == 0 ? "deferred" : "deferred" + index;
@@ -210,6 +223,10 @@ public final class TerrainPackCompiler {
             allSources.add(program.vertex());
             allSources.add(program.fragment());
         });
+        shadowCompPrograms.forEach(program -> {
+            allSources.add(program.vertex());
+            allSources.add(program.fragment());
+        });
         deferredPrograms.forEach(program -> {
             allSources.add(program.vertex());
             allSources.add(program.fragment());
@@ -251,6 +268,10 @@ public final class TerrainPackCompiler {
             for (TranslatedPost post : preparePrograms) {
                 preparedPreparePrograms.add(adaptPost(compiler, post, uniforms, optimisation));
             }
+            List<PreparedTerrainPack.PostProgram> preparedShadowCompPrograms = new ArrayList<>();
+            for (TranslatedPost post : shadowCompPrograms) {
+                preparedShadowCompPrograms.add(adaptPost(compiler, post, uniforms, optimisation));
+            }
             List<PreparedTerrainPack.PostProgram> preparedDeferredPrograms = new ArrayList<>();
             for (TranslatedPost post : deferredPrograms) {
                 preparedDeferredPrograms.add(adaptPost(compiler, post, uniforms, optimisation));
@@ -268,6 +289,10 @@ public final class TerrainPackCompiler {
                 referencedTargets.addAll(p.drawTargets());
                 referencedTargets.addAll(colortexIndices(p.samplers()));
             });
+            preparedShadowCompPrograms.forEach(p -> {
+                referencedTargets.addAll(p.drawTargets());
+                referencedTargets.addAll(colortexIndices(p.samplers()));
+            });
             preparedDeferredPrograms.forEach(p -> {
                 referencedTargets.addAll(p.drawTargets());
                 referencedTargets.addAll(colortexIndices(p.samplers()));
@@ -281,6 +306,7 @@ public final class TerrainPackCompiler {
             }
             List<PreparedTerrainPack.PostProgram> targetPrograms = new ArrayList<>(
                 preparedPreparePrograms);
+            targetPrograms.addAll(preparedShadowCompPrograms);
             targetPrograms.addAll(preparedDeferredPrograms);
             targetPrograms.addAll(compositePrograms);
             Map<Integer, PreparedTerrainPack.TargetPlan> targets = buildTargetPlans(
@@ -288,8 +314,9 @@ public final class TerrainPackCompiler {
             diagnostics.addAll(targetDirectives.problems());
             return new PreparedTerrainPack(packName, details.contentHash(), programs, entityProgram,
                 particleProgram,
-                shadowProgram, preparedPreparePrograms, preparedDeferredPrograms, compositePrograms,
-                finalProgram, targets, uniforms, diagnostics);
+                shadowProgram, preparedPreparePrograms, preparedShadowCompPrograms,
+                preparedDeferredPrograms, compositePrograms, finalProgram, targets, uniforms,
+                diagnostics);
         }
     }
 

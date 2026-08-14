@@ -168,6 +168,7 @@ public final class ShaderRuntime {
     private MainColorRedirect mainColorRedirect;
     private boolean shadowRendering;
     private boolean prepareRendered;
+    private boolean shadowCompRendered;
     private boolean loggedTerrainMrt;
     private boolean loggedPostChain;
     private boolean loggedShadowPass;
@@ -309,6 +310,14 @@ public final class ShaderRuntime {
                 postPipelines.put(prepare, pipeline);
                 sources.put(pipeline, source);
             }
+            for (PreparedTerrainPack.PostProgram shadowComp : prepared.shadowCompPrograms()) {
+                RenderPipeline pipeline = buildPostPipeline(prepared, shadowComp, false,
+                    mainTarget.getColorTexture().getFormat());
+                ShaderSource source = shaderSource(pipeline, shadowComp);
+                precompile(shadowComp.sourceName(), pipeline, source);
+                postPipelines.put(shadowComp, pipeline);
+                sources.put(pipeline, source);
+            }
             for (PreparedTerrainPack.PostProgram deferred : prepared.deferredPrograms()) {
                 RenderPipeline pipeline = buildPostPipeline(prepared, deferred, false,
                     mainTarget.getColorTexture().getFormat());
@@ -365,6 +374,7 @@ public final class ShaderRuntime {
             mainColorRedirect = null;
             shadowRendering = false;
             prepareRendered = false;
+            shadowCompRendered = false;
             loggedTerrainMrt = false;
             loggedPostChain = false;
             loggedShadowPass = false;
@@ -378,11 +388,11 @@ public final class ShaderRuntime {
                 ? "Vulkan terrain MRT + composite/final active"
                 : "Vulkan terrain pipelines active";
             status = new Status(State.ACTIVE, prepared.name(), detail);
-            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, particles={}, shadow={}, {} prepare, {} deferred, {} composite/final pipelines, {} targets,"
+            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, particles={}, shadow={}, {} prepare, {} shadowcomp, {} deferred, {} composite/final pipelines, {} targets,"
                     + " {} diagnostics)", prepared.name(), pipelines.size(),
                 entityPipeline != null, opaqueParticlePipeline != null, shadowPipeline != null,
-                prepared.preparePrograms().size(), prepared.deferredPrograms().size(),
-                postPipelines.size(), prepared.targets().size(),
+                prepared.preparePrograms().size(), prepared.shadowCompPrograms().size(),
+                prepared.deferredPrograms().size(), postPipelines.size(), prepared.targets().size(),
                 prepared.diagnostics().size());
         } catch (RuntimeException e) {
             fail(requestedGeneration, prepared.name(), usefulMessage(e), e);
@@ -837,6 +847,7 @@ public final class ShaderRuntime {
         terrainInvocation = null;
         shadowView = null;
         prepareRendered = false;
+        shadowCompRendered = false;
     }
 
     /**
@@ -982,6 +993,7 @@ public final class ShaderRuntime {
             shadowRendering = false;
         }
         replayEntityShadows(current);
+        renderShadowCompChain(current);
     }
 
     private void replayEntityShadows(ActivePack current) {
@@ -1016,6 +1028,29 @@ public final class ShaderRuntime {
                 loggedEntityShadows = true;
                 LOGGER.info("Recorded {} standard entity/block-entity shadow draws", entityShadowDraws.size());
             }
+        }
+    }
+
+    /** Runs colortex shadowcomp stages after terrain and entity shadow replay are complete. */
+    private void renderShadowCompChain(ActivePack current) {
+        if (shadowCompRendered || current.prepared().shadowCompPrograms().isEmpty()
+            || current.framebuffer() == null || frameUniforms == null) {
+            return;
+        }
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        try {
+            for (PreparedTerrainPack.PostProgram program : current.prepared().shadowCompPrograms()) {
+                executePost(current, encoder, program, frameUniforms, false);
+                current.framebuffer().finishPost(program);
+            }
+            shadowCompRendered = true;
+        } catch (RuntimeException e) {
+            long failedGeneration = generation.incrementAndGet();
+            status = new Status(State.FAILED, current.prepared().name(),
+                "shadowcomp chain failed: " + usefulMessage(e));
+            LOGGER.error("Shadowcomp chain for {} failed and was deactivated",
+                current.prepared().name(), e);
+            deactivate(failedGeneration);
         }
     }
 

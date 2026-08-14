@@ -19,6 +19,7 @@ public record PreparedTerrainPack(String name, String contentHash,
                                   ParticleProgram particleProgram,
                                   ShadowProgram shadowProgram,
                                   List<PostProgram> preparePrograms,
+                                  List<PostProgram> shadowCompPrograms,
                                   List<PostProgram> deferredPrograms,
                                   List<PostProgram> compositePrograms,
                                   PostProgram finalProgram,
@@ -88,6 +89,7 @@ public record PreparedTerrainPack(String name, String contentHash,
     public PreparedTerrainPack {
         programs = Map.copyOf(new EnumMap<>(programs));
         preparePrograms = List.copyOf(preparePrograms);
+        shadowCompPrograms = List.copyOf(shadowCompPrograms);
         deferredPrograms = List.copyOf(deferredPrograms);
         compositePrograms = List.copyOf(compositePrograms);
         targets = Map.copyOf(targets);
@@ -96,7 +98,8 @@ public record PreparedTerrainPack(String name, String contentHash,
 
     /** Whether terrain must render into Retina-owned attachments before the post chain. */
     public boolean usesOffscreenTargets() {
-        return !preparePrograms.isEmpty() || !deferredPrograms.isEmpty()
+        return !preparePrograms.isEmpty() || !shadowCompPrograms.isEmpty()
+            || !deferredPrograms.isEmpty()
             || !compositePrograms.isEmpty() || finalProgram != null
             || programs.values().stream().anyMatch(p -> !p.drawTargets().equals(List.of(0)));
     }

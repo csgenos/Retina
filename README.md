@@ -28,6 +28,9 @@ lighting; it proves renderer stages rather than visual polish.
   pack running). Prepare currently runs once before Sodium's first terrain invocation; deferred
   runs after Retina's assembled world scene and before composite/final. Neither yet exposes
   Iris's per-stage particle or weather ordering controls.
+- Shadow composition: numbered `shadowcomp` passes run after terrain/entity shadow replay and
+  before deferred. They can sample `shadowtex0`, `shadowtex1`, `shadow`, and `shadowcolor*`, then
+  write through normal colortex targets. Native shadowcolor-attachment output remains later work.
 - Terrain shadows: `shadow.vsh/fsh`, 128–4096 power-of-two maps, `shadowDistance`, D32 depth,
   two `shadowcolor` outputs, raw `shadowtex1`, and comparison `shadowtex0`/`shadow` sampling.
   Visible Sodium terrain is replayed from a light-space camera into the map.
@@ -67,7 +70,7 @@ lighting; it proves renderer stages rather than visual polish.
 - Underwater medium effects are not implemented yet. Terrain culling still uses Minecraft/Sodium
   fog distances, but Retina does not yet add Iris-style underwater scene attenuation or water
   surface compositing.
-- `setup`, `shadowcomp`, compute/SSBO, geometry/tessellation, custom pack
+- `setup`, compute/SSBO, geometry/tessellation, custom pack
   textures/images, resource-pack texture access, dimensions, Distant Horizons, and most of the
   Iris `shaders.properties` expression ecosystem are not live yet.
 - Packs requiring a non-full-resolution/non-RGBA8 `colortex0` use a safe terrain-only fallback
@@ -79,7 +82,7 @@ lighting; it proves renderer stages rather than visual polish.
    the standard entity quad ABI.
 2. Expand dedicated render-stage programs for weather, clouds, sky, and effects, then add
    their ordering and cross-stage contracts around the completed particle baseline.
-3. Implement setup/shadowcomp stages and broaden colortex behavior.
+3. Implement setup and native shadowcolor processing, then broaden colortex behavior.
 4. Add custom textures/images/samplers and resource-pack texture integration.
 5. Reach Iris-comparable breadth: expand the useful legacy shader-pack surface where it suits
    Retina, then add uniforms, expressions, material/entity maps, dimensions, mod support,

@@ -140,6 +140,25 @@ final class TerrainPackCompilerTest {
                 gl_FragColor = texture2D(colortex0, texCoord);
             }
             """);
+        Files.writeString(shaders.resolve("shadowcomp.vsh"), """
+            #version 120
+            varying vec2 texCoord;
+            void main() {
+                gl_Position = ftransform();
+                texCoord = gl_MultiTexCoord0.xy;
+            }
+            """);
+        Files.writeString(shaders.resolve("shadowcomp.fsh"), """
+            #version 120
+            /* RENDERTARGETS: 0 */
+            uniform sampler2D colortex0;
+            uniform sampler2D shadowtex1;
+            varying vec2 texCoord;
+            void main() {
+                gl_FragColor = texture2D(colortex0, texCoord)
+                    + vec4(texture2D(shadowtex1, texCoord).r * 0.0);
+            }
+            """);
         Files.writeString(shaders.resolve("deferred.fsh"), """
             #version 120
             /* RENDERTARGETS: 0 */
@@ -249,6 +268,8 @@ final class TerrainPackCompilerTest {
             result.programs().get(PreparedTerrainPack.PassKind.SOLID).drawTargets());
         assertEquals(1, result.preparePrograms().size());
         assertEquals("prepare", result.preparePrograms().getFirst().sourceName());
+        assertEquals(1, result.shadowCompPrograms().size());
+        assertEquals("shadowcomp", result.shadowCompPrograms().getFirst().sourceName());
         assertEquals(1, result.deferredPrograms().size());
         assertEquals("deferred", result.deferredPrograms().getFirst().sourceName());
         assertEquals(1, result.compositePrograms().size());
