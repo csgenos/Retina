@@ -104,6 +104,18 @@ public record RetinaConfig(String selectedPack, RendererProfile profile, boolean
             adapterOverride, vramBudgetMegabytes, parallelCompilation, compileThreads, file);
     }
 
+    /** A copy with the in-game pass timing overlay enabled or disabled. */
+    public RetinaConfig withDebugOverlay(boolean next) {
+        return new RetinaConfig(selectedPack, profile, next, validationLayers,
+            adapterOverride, vramBudgetMegabytes, parallelCompilation, compileThreads, file);
+    }
+
+    /** A copy with asynchronous shader compilation enabled or disabled. */
+    public RetinaConfig withParallelCompilation(boolean next) {
+        return new RetinaConfig(selectedPack, profile, debugOverlay, validationLayers,
+            adapterOverride, vramBudgetMegabytes, next, compileThreads, file);
+    }
+
     /** A copy bound to {@code path} for saving. */
     public RetinaConfig withFile(Path path) {
         return new RetinaConfig(selectedPack, profile, debugOverlay, validationLayers,

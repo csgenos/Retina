@@ -20,6 +20,9 @@
     ],
     "client": [
       "dev.retina.RetinaClient"
+    ],
+    "sodium:config_api_user": [
+      "dev.retina.gui.SodiumConfigIntegration"
     ]
   },
   "accessWidener": "retina.accesswidener",
