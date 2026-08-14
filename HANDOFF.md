@@ -87,6 +87,13 @@ The distributable artifact is:
 retina-fabric/build/libs/retina-0.1.0+mc26.2.jar
 ```
 
+## Continuous integration
+
+`.github/workflows/build.yml` runs the release build for every pull request,
+every push to `main`, and manual dispatch. Successful runs upload the publishable
+Fabric JAR (excluding the sources JAR) as a 30-day Actions artifact. It
+intentionally does not create a GitHub release or publish to a mod platform.
+
 ## Supported live pack surface
 
 The current bridge supports Sodium terrain programs and their historical fallback chain,

@@ -16,6 +16,13 @@ Upload only `retina-fabric/build/libs/retina-<version>.jar`. Do not upload the `
 The build runs `verifyReleaseJar`, which confirms that `fabric.mod.json`, the Retina icon, LGPL
 notice, and bundled Retina core are present in the distributable jar.
 
+## Continuous build artifacts
+
+GitHub Actions runs this same release build for pull requests and pushes to
+`main`. A successful workflow retains the publishable JAR as an Actions artifact
+for 30 days. These artifacts are intended for testing and review; the workflow
+does not publish a GitHub release, Modrinth file, or CurseForge file.
+
 ## Platform metadata
 
 Use the following initial listing details:
