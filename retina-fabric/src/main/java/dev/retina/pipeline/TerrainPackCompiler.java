@@ -152,7 +152,11 @@ public final class TerrainPackCompiler {
         TranslatedEntity translatedEntity = translateOptionalEntity(preprocessor, optionApplier,
             source, shadersRoot, details, translator, targetDirectives, diagnostics);
         TranslatedParticle translatedParticle = translateOptionalParticle(preprocessor, optionApplier,
-            source, shadersRoot, details, translator, targetDirectives, diagnostics);
+            source, shadersRoot, details, translator, targetDirectives, diagnostics,
+            ProgramId.GBUFFERS_PARTICLES, "particles");
+        TranslatedParticle translatedWeather = translateOptionalParticle(preprocessor, optionApplier,
+            source, shadersRoot, details, translator, targetDirectives, diagnostics,
+            ProgramId.GBUFFERS_WEATHER, "weather");
 
         Map<String, RenderTargetDirectives.PassScale> scales =
             targetDirectives.readPassScales(details.properties().raw());
@@ -264,6 +268,8 @@ public final class TerrainPackCompiler {
                 : adaptEntity(compiler, translatedEntity, optimisation);
             PreparedTerrainPack.ParticleProgram particleProgram = translatedParticle == null ? null
                 : adaptParticle(compiler, translatedParticle, optimisation);
+            PreparedTerrainPack.WeatherProgram weatherProgram = translatedWeather == null ? null
+                : adaptWeather(compiler, translatedWeather, optimisation);
             List<PreparedTerrainPack.PostProgram> preparedPreparePrograms = new ArrayList<>();
             for (TranslatedPost post : preparePrograms) {
                 preparedPreparePrograms.add(adaptPost(compiler, post, uniforms, optimisation));
@@ -313,7 +319,7 @@ public final class TerrainPackCompiler {
                 referencedTargets, targetDirectives, details, programs, targetPrograms);
             diagnostics.addAll(targetDirectives.problems());
             return new PreparedTerrainPack(packName, details.contentHash(), programs, entityProgram,
-                particleProgram,
+                particleProgram, weatherProgram,
                 shadowProgram, preparedPreparePrograms, preparedShadowCompPrograms,
                 preparedDeferredPrograms, compositePrograms, finalProgram, targets, uniforms,
                 diagnostics);
@@ -377,9 +383,10 @@ public final class TerrainPackCompiler {
     private static TranslatedParticle translateOptionalParticle(ShaderPreprocessor preprocessor,
         OptionApplier optionApplier, PackSource source, PackPath shadersRoot,
         PackManager.PackDetails details, VulkanTranslator translator,
-        RenderTargetDirectives targets, List<String> diagnostics)
+        RenderTargetDirectives targets, List<String> diagnostics, ProgramId programId,
+        String cullKey)
         throws IOException, CompilationException {
-        String name = ProgramId.GBUFFERS_PARTICLES.sourceName();
+        String name = programId.sourceName();
         PackPath vertexPath = shadersRoot.resolve(name + ".vsh");
         PackPath fragmentPath = shadersRoot.resolve(name + ".fsh");
         boolean hasVertex = source.readText(vertexPath).isPresent();
@@ -422,7 +429,7 @@ public final class TerrainPackCompiler {
         diagnostics.addAll(fragment.warnings());
         rejectUnboundResources(name, vertex, fragment);
         boolean cull = details.properties().programOverrides().backFaceCulling()
-            .getOrDefault("particles", false);
+            .getOrDefault(cullKey, false);
         return new TranslatedParticle(name, vertex, fragment, cull);
     }
 
@@ -728,6 +735,14 @@ public final class TerrainPackCompiler {
             optimisation);
         return new PreparedTerrainPack.ParticleProgram(particle.sourceName(), vertex, fragment,
             particle.cull());
+    }
+
+    private static PreparedTerrainPack.WeatherProgram adaptWeather(SpirvCompiler compiler,
+        TranslatedParticle weather, SpirvCompiler.Optimisation optimisation)
+        throws CompilationException {
+        PreparedTerrainPack.ParticleProgram adapted = adaptParticle(compiler, weather, optimisation);
+        return new PreparedTerrainPack.WeatherProgram(adapted.sourceName(), adapted.vertexSource(),
+            adapted.fragmentSource(), adapted.cull());
     }
 
     private static Map<String, String> postSamplers(String program, TranslatedSource... stages)

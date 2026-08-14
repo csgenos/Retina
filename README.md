@@ -48,6 +48,9 @@ lighting; it proves renderer stages rather than visual polish.
   `pipeline/opaque_particle` and `pipeline/translucent_particle` quad stages. It keeps
   vanilla's opaque-versus-alpha-blended split and supplies the matching transform, fog,
   particle texture, and lightmap ABI. Weather is deliberately not routed through this stage.
+- Weather shaders: optional `gbuffers_weather.vsh/fsh` runs for Minecraft's weather depth-write
+  and no-depth-write quad pipelines, preserving their translucent blend/depth behavior and the
+  particle-format transform, fog, texture, and lightmap ABI.
 - Standard entity-format shadow casters: Retina records the original indexed buffers, dynamic
   transform UBO, and atlas binding, then replays compatible `pipeline/entity_*` draws into the
   terrain shadow map with alpha testing. This also covers a block entity when its renderer uses

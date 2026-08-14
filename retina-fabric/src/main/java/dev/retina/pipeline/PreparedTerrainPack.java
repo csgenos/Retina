@@ -17,6 +17,7 @@ public record PreparedTerrainPack(String name, String contentHash,
                                   Map<PassKind, Program> programs,
                                   EntityProgram entityProgram,
                                   ParticleProgram particleProgram,
+                                  WeatherProgram weatherProgram,
                                   ShadowProgram shadowProgram,
                                   List<PostProgram> preparePrograms,
                                   List<PostProgram> shadowCompPrograms,
@@ -45,6 +46,11 @@ public record PreparedTerrainPack(String name, String contentHash,
     /** Minecraft's particle quad format, supplied by {@code gbuffers_particles}. */
     public record ParticleProgram(String sourceName, String vertexSource, String fragmentSource,
                                   boolean cull) {
+    }
+
+    /** Minecraft's weather quad format, supplied by {@code gbuffers_weather}. */
+    public record WeatherProgram(String sourceName, String vertexSource, String fragmentSource,
+                                 boolean cull) {
     }
 
     /** Terrain-only shadow program and its pack-selected map parameters. */
