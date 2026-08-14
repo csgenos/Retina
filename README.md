@@ -4,6 +4,14 @@ Retina is an independent Vulkan shader-pack loader for Minecraft 26.2, Fabric, a
 0.9.1. It translates legacy shader-pack GLSL and renders through Minecraft's native Blaze3D
 Vulkan backend while retaining Sodium's chunk building, culling, buffers, and draw submission.
 
+## Installation
+
+Retina is a client-only Fabric mod. Install the matching Fabric Loader, Fabric API, Sodium 0.9.x,
+and Retina into the instance's `mods` folder; then select Minecraft's Vulkan graphics backend.
+It intentionally conflicts with Iris, Sulkan, VulkanMod, Canvas, and Embeddium because only one
+renderer/shader pipeline can own the client. See [PUBLISHING.md](docs/PUBLISHING.md) for the
+release artifact and platform-upload checklist.
+
 ## Current status
 
 Retina is an early, working Vulkan-native shader renderer—not yet an Iris-comparable release.

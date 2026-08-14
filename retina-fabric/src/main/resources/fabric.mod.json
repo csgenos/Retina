@@ -4,6 +4,7 @@
   "version": "${version}",
   "name": "Retina",
   "description": "A highly optimized Vulkan shader-pack loader for Fabric and Sodium.",
+  "icon": "assets/retina/icon.png",
   "authors": [
     "the Retina contributors"
   ],
