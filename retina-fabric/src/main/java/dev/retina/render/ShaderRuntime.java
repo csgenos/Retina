@@ -1128,6 +1128,18 @@ public final class ShaderRuntime {
         if (shadowRendering || active == null || active.shadowFramebuffer() == null) {
             return;
         }
+        if (pass.isTranslucent()) {
+            // Sodium's own TerrainRenderPass.getTarget() resolves a translucent pass to
+            // Minecraft's translucentTarget(), a target scoped to vanilla's own translucent
+            // draw within the normal frame. Retina's shadow replay runs later, in the same
+            // frame but outside that window, where translucentTarget() is null -- and
+            // DefaultChunkRenderer.render() dereferences getTarget() as a plain argument
+            // expression before Retina's render-pass redirect mixin ever runs, so there is no
+            // way to redirect this pass to the shadow framebuffer at all. Shadow maps
+            // conventionally skip translucent/water depth regardless, so the correct fix is
+            // simply not to capture it for replay.
+            return;
+        }
         if (terrainInvocation == null) {
             terrainInvocation = new TerrainInvocation();
         }
