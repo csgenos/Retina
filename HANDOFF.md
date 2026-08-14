@@ -112,6 +112,14 @@ map with their original `DynamicTransforms` slice and `Sampler0` atlas. The repl
 the pack's shadow matrices and alpha-discard; a block entity is therefore covered only when it
 uses this independently validated standard ABI.
 
+`gbuffers_particles.vsh/fsh` is supported for precisely `pipeline/opaque_particle` and
+`pipeline/translucent_particle`. `ParticleShaderAdapter` maps legacy attributes onto
+`DefaultVertexFormat.PARTICLE` (`Position`, `UV0`, `Color`, `UV2`) and retains Minecraft's
+native dynamic-transform, projection, fog, particle-texture (`Sampler0`), and lightmap
+(`Sampler2`) bindings. The runtime precompiles distinct opaque and translucent pipelines so
+the latter preserves vanilla alpha blending. Weather uses a related but different pipeline
+contract and remains safely vanilla until it has its own stage.
+
 When `colortex0` is a full-resolution `RGBA8_UNORM` target (the default), Retina temporarily
 routes Minecraft's main world target there for the LevelRenderer frame. Sky, clouds, weather,
 particles, entities, and block entities consequently survive through normal/composite/final
@@ -164,12 +172,21 @@ that lifecycle issue remains recorded for a later stability pass. Underwater att
 surface compositing, and its desired chunk-loading presentation are later effects/stage work, not
 Gate 0–2 terrain or standard-entity ABI work.
 
+Gate 3 has started with the particle baseline. `ProgramId.GBUFFERS_PARTICLES`,
+`TerrainPackCompiler`, `ParticleShaderAdapter`, and `ShaderRuntime` now form one transactional
+optional path: absent particle programs retain vanilla rendering; a supplied GLSL 120 pair is
+translated and shaderc-validated before separate opaque/translucent Vulkan pipelines are
+precompiled. The acceptance lighting pack supplies this program and its development-client
+activation logged `particles=true` with zero diagnostics on the AMD Vulkan backend. This is
+activation evidence only; keep the next live test focused on visible opaque and translucent
+particle probes before claiming in-world visual validation. `syncAcceptancePacks` is now an
+explicit dependency of `runClient`, so the one-command development run cannot race its pack copy.
+
 1. **Dedicated block entities and player/hand.** Add separately validated vertex/bind-group
    paths before claiming coverage for non-standard block entities, armor, items, eyes, or the
    player hand. Preserve the current safe exclusion for mod-defined formats.
-2. **Dedicated scene stages.** Move from scene-target preservation to real shader-pack stages
-   for particles, weather, clouds, sky, and effects, each with declared ordering and a separate
-   compatibility boundary.
+2. **Dedicated scene stages.** Validate the particle baseline in-world, then add weather,
+   clouds, sky, and effects with declared ordering and a separate compatibility boundary.
 3. **Pipeline breadth.** Connect `prepare`, `deferred`, `setup`, and `shadowcomp`; expand
    ping-pong, target scaling/resizing, and attachment behavior only with live GPU tests.
 4. **Resources and ecosystem.** Add pack textures/images/samplers, resource-pack texture

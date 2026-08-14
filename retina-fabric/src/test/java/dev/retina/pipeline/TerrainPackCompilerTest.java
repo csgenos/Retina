@@ -184,6 +184,25 @@ final class TerrainPackCompilerTest {
                 gl_FragColor = texture2D(texture, texCoord) * tint;
             }
             """);
+        Files.writeString(shaders.resolve("gbuffers_particles.vsh"), """
+            #version 120
+            varying vec2 texCoord;
+            varying vec4 tint;
+            void main() {
+                gl_Position = ftransform();
+                texCoord = gl_MultiTexCoord0.xy;
+                tint = gl_Color;
+            }
+            """);
+        Files.writeString(shaders.resolve("gbuffers_particles.fsh"), """
+            #version 120
+            uniform sampler2D texture;
+            varying vec2 texCoord;
+            varying vec4 tint;
+            void main() {
+                gl_FragColor = texture2D(texture, texCoord) * tint;
+            }
+            """);
 
         PackManager manager = new PackManager(shaderpacks, temporary.resolve("config-mrt"),
             temporary.resolve("cache-mrt"));
@@ -209,6 +228,10 @@ final class TerrainPackCompilerTest {
         assertEquals("gbuffers_entities", result.entityProgram().sourceName());
         assertTrue(result.entityProgram().vertexSource().contains("retina_init_entity_vertex();"));
         assertTrue(result.entityProgram().fragmentSource().contains("Sampler0"));
+        assertEquals("gbuffers_particles", result.particleProgram().sourceName());
+        assertTrue(result.particleProgram().vertexSource()
+            .contains("retina_init_particle_vertex();"));
+        assertTrue(result.particleProgram().fragmentSource().contains("Sampler0"));
         assertEquals("sampler2D", result.finalProgram().samplerTypes().get("shadowtex1"));
         assertEquals("sampler2DShadow", result.finalProgram().samplerTypes().get("shadowtex0"));
         assertTrue(result.finalProgram().vertexSource()

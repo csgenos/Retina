@@ -85,6 +85,8 @@ public final class ShaderRuntime {
     private record ActivePack(PreparedTerrainPack prepared,
                               Map<PreparedTerrainPack.PassKind, RenderPipeline> pipelines,
                               RenderPipeline entityPipeline,
+                              RenderPipeline opaqueParticlePipeline,
+                              RenderPipeline translucentParticlePipeline,
                               RenderPipeline shadowPipeline,
                               RenderPipeline entityShadowPipeline,
                               Map<PreparedTerrainPack.PostProgram, RenderPipeline> postPipelines,
@@ -277,6 +279,20 @@ public final class ShaderRuntime {
                 precompile(prepared.entityProgram().sourceName(), entityPipeline, source);
                 sources.put(entityPipeline, source);
             }
+            RenderPipeline opaqueParticlePipeline = null;
+            RenderPipeline translucentParticlePipeline = null;
+            if (prepared.particleProgram() != null) {
+                opaqueParticlePipeline = buildParticlePipeline(prepared, prepared.particleProgram(), false);
+                translucentParticlePipeline = buildParticlePipeline(prepared, prepared.particleProgram(), true);
+                ShaderSource opaqueSource = shaderSource(opaqueParticlePipeline, prepared.particleProgram());
+                ShaderSource translucentSource = shaderSource(translucentParticlePipeline, prepared.particleProgram());
+                precompile(prepared.particleProgram().sourceName() + " opaque", opaqueParticlePipeline,
+                    opaqueSource);
+                precompile(prepared.particleProgram().sourceName() + " translucent",
+                    translucentParticlePipeline, translucentSource);
+                sources.put(opaqueParticlePipeline, opaqueSource);
+                sources.put(translucentParticlePipeline, translucentSource);
+            }
             RenderPipeline entityShadowPipeline = null;
             if (prepared.shadowProgram() != null && prepared.entityProgram() != null) {
                 entityShadowPipeline = buildEntityShadowPipeline(prepared, prepared.shadowProgram());
@@ -311,6 +327,7 @@ public final class ShaderRuntime {
                 : new ShadowFramebuffer(prepared.shadowProgram());
             ActivePack previous = active;
             active = new ActivePack(prepared, Map.copyOf(pipelines), entityPipeline,
+                opaqueParticlePipeline, translucentParticlePipeline,
                 shadowPipeline, entityShadowPipeline, Map.copyOf(postPipelines), Map.copyOf(sources), storage,
                 framebuffer, shadowFramebuffer);
             if (previous != null) {
@@ -343,9 +360,10 @@ public final class ShaderRuntime {
                 ? "Vulkan terrain MRT + composite/final active"
                 : "Vulkan terrain pipelines active";
             status = new Status(State.ACTIVE, prepared.name(), detail);
-            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, shadow={}, {} post pipelines, {} targets,"
+            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, particles={}, shadow={}, {} post pipelines, {} targets,"
                     + " {} diagnostics)", prepared.name(), pipelines.size(),
-                entityPipeline != null, shadowPipeline != null, postPipelines.size(), prepared.targets().size(),
+                entityPipeline != null, opaqueParticlePipeline != null, shadowPipeline != null,
+                postPipelines.size(), prepared.targets().size(),
                 prepared.diagnostics().size());
         } catch (RuntimeException e) {
             fail(requestedGeneration, prepared.name(), usefulMessage(e), e);
@@ -498,6 +516,32 @@ public final class ShaderRuntime {
             .build();
     }
 
+    /** Standard Minecraft particle quad ABI, with the vanilla opaque/translucent split retained. */
+    private static RenderPipeline buildParticlePipeline(PreparedTerrainPack pack,
+        PreparedTerrainPack.ParticleProgram program, boolean translucent) {
+        String suffix = pack.contentHash().substring(0,
+            Math.min(12, pack.contentHash().length())) + "/particles/"
+            + (translucent ? "translucent" : "opaque");
+        Identifier shader = Identifier.fromNamespaceAndPath("retina", suffix);
+        return RenderPipeline.builder()
+            .withBindGroupLayout(BindGroupLayouts.GLOBALS)
+            .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+            .withBindGroupLayout(BindGroupLayouts.FOG)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER2)
+            .withLocation(Identifier.fromNamespaceAndPath("retina", suffix))
+            .withVertexShader(shader)
+            .withFragmentShader(shader)
+            .withCull(program.cull())
+            .withDepthStencilState(DepthStencilState.DEFAULT)
+            .withPrimitiveTopology(PrimitiveTopology.QUADS)
+            .withVertexBinding(0, DefaultVertexFormat.PARTICLE)
+            .withColorTargetState(new ColorTargetState(translucent
+                ? Optional.of(BlendFunction.TRANSLUCENT) : Optional.empty(),
+                com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, -1))
+            .build();
+    }
+
     private static void precompile(String name, RenderPipeline pipeline, ShaderSource source) {
         CompiledRenderPipeline compiled = RenderSystem.getDevice()
             .precompilePipeline(pipeline, source);
@@ -538,6 +582,16 @@ public final class ShaderRuntime {
 
     private static ShaderSource shaderSource(RenderPipeline pipeline,
                                              PreparedTerrainPack.EntityProgram program) {
+        return (id, type) -> {
+            if (!id.equals(pipeline.getVertexShader()) && !id.equals(pipeline.getFragmentShader())) {
+                return null;
+            }
+            return type == ShaderType.VERTEX ? program.vertexSource() : program.fragmentSource();
+        };
+    }
+
+    private static ShaderSource shaderSource(RenderPipeline pipeline,
+                                             PreparedTerrainPack.ParticleProgram program) {
         return (id, type) -> {
             if (!id.equals(pipeline.getVertexShader()) && !id.equals(pipeline.getFragmentShader())) {
                 return null;
@@ -628,15 +682,27 @@ public final class ShaderRuntime {
         return current.pipelines().get(kind);
     }
 
-    /** Replaces only the standard entity pipeline family while the scene target is redirected. */
-    public RenderPipeline entityPipelineFor(RenderPipeline original) {
+    /** Replaces only dedicated, ABI-validated scene stages while colortex0 owns the scene. */
+    public RenderPipeline scenePipelineFor(RenderPipeline original) {
         ActivePack current = active;
-        if (current == null || current.entityPipeline() == null || mainColorRedirect == null
-            || original.getVertexFormatBinding(0) != DefaultVertexFormat.ENTITY
+        if (current == null || mainColorRedirect == null
             || original.getPrimitiveTopology() != PrimitiveTopology.QUADS) {
             return original;
         }
         String path = original.getLocation().getPath();
+        if (original.getVertexFormatBinding(0) == DefaultVertexFormat.PARTICLE) {
+            if (path.equals("pipeline/opaque_particle") && current.opaqueParticlePipeline() != null) {
+                return current.opaqueParticlePipeline();
+            }
+            if (path.equals("pipeline/translucent_particle") && current.translucentParticlePipeline() != null) {
+                return current.translucentParticlePipeline();
+            }
+            return original;
+        }
+        if (current.entityPipeline() == null || original.getVertexFormatBinding(0)
+            != DefaultVertexFormat.ENTITY) {
+            return original;
+        }
         // Vanilla's projected entity-shadow decal is an alpha-blended screen-space effect. It
         // is not an entity mesh and must keep its own translucent pipeline; routing it through
         // gbuffers_entities makes the decal an opaque black disk.

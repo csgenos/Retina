@@ -60,6 +60,12 @@ Validated on 2026-08-13 with Minecraft 26.2, Fabric Loader 0.19.3, Fabric API
     same fog model as terrain. The next validation-layer client restart activated the corrected
     lighting-reference pack successfully with zero compiler diagnostics; a final in-world visual
     confirmation remains the next manual check.
+15. Gate 3's initial particle path was compiled through the Fabric test suite, then the
+    development client launched through the normal `runClient` task on the AMD Vulkan backend.
+    The acceptance lighting pack activated with `particles=true` and zero diagnostics, proving
+    the optional program was translated and both opaque/translucent pipelines precompiled. No
+    in-world particle draw has been recorded yet, so this is activation evidence rather than a
+    visual-quality claim.
 
 ## Bugs found by the world tests
 

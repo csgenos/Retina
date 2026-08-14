@@ -38,6 +38,10 @@ lighting; it proves renderer stages rather than visual polish.
 - Basic entity shaders: `gbuffers_entities.vsh/fsh` runs for the normal Minecraft
   `pipeline/entity_*` quad family, with the vanilla transform, fog, lighting, `Sampler0`, and
   `Sampler2` ABI. Unsupported entity pipeline families fall back safely to vanilla.
+- Particle shaders: optional `gbuffers_particles.vsh/fsh` runs for Minecraft's
+  `pipeline/opaque_particle` and `pipeline/translucent_particle` quad stages. It keeps
+  vanilla's opaque-versus-alpha-blended split and supplies the matching transform, fog,
+  particle texture, and lightmap ABI. Weather is deliberately not routed through this stage.
 - Standard entity-format shadow casters: Retina records the original indexed buffers, dynamic
   transform UBO, and atlas binding, then replays compatible `pipeline/entity_*` draws into the
   terrain shadow map with alpha testing. This also covers a block entity when its renderer uses
@@ -70,8 +74,8 @@ lighting; it proves renderer stages rather than visual polish.
 
 1. Add dedicated block-entity and player/hand paths, then safely broaden shadow casters beyond
    the standard entity quad ABI.
-2. Expand dedicated render-stage programs for particles, weather, clouds, sky,
-   and effects.
+2. Expand dedicated render-stage programs for weather, clouds, sky, and effects, then add
+   their ordering and cross-stage contracts around the completed particle baseline.
 3. Implement deferred/prepare/setup/shadowcomp stages and broaden colortex behavior.
 4. Add custom textures/images/samplers and resource-pack texture integration.
 5. Reach Iris-comparable breadth: expand the useful legacy shader-pack surface where it suits

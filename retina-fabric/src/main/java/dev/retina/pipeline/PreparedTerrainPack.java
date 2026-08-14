@@ -16,6 +16,7 @@ import java.util.Map;
 public record PreparedTerrainPack(String name, String contentHash,
                                   Map<PassKind, Program> programs,
                                   EntityProgram entityProgram,
+                                  ParticleProgram particleProgram,
                                   ShadowProgram shadowProgram,
                                   List<PostProgram> compositePrograms,
                                   PostProgram finalProgram,
@@ -36,6 +37,11 @@ public record PreparedTerrainPack(String name, String contentHash,
     /** A standard Minecraft entity-format program, supplied by {@code gbuffers_entities}. */
     public record EntityProgram(String sourceName, String vertexSource, String fragmentSource,
                                 boolean cull) {
+    }
+
+    /** Minecraft's particle quad format, supplied by {@code gbuffers_particles}. */
+    public record ParticleProgram(String sourceName, String vertexSource, String fragmentSource,
+                                  boolean cull) {
     }
 
     /** Terrain-only shadow program and its pack-selected map parameters. */
