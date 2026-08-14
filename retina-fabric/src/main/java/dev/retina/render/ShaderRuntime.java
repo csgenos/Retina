@@ -188,6 +188,27 @@ public final class ShaderRuntime {
     private final Map<RenderPass, EntityDrawState> entityPasses = new IdentityHashMap<>();
     private final List<IndexedEntityDraw> entityShadowDraws = new ArrayList<>();
 
+    /**
+     * Whether any pack is active that needs vanilla draw state mirrored.
+     *
+     * <p>{@code RenderPassMixin} injects into six methods that run on every draw call in the
+     * game, Retina's and vanilla's alike. Reading one static field and returning is the
+     * difference between an inlined no-op and six virtual calls plus six map probes per draw
+     * when no pack is loaded, which is the default state.
+     */
+    private static volatile boolean capturingDrawState;
+
+    /**
+     * Memoised pipeline substitutions for the active pack.
+     *
+     * <p>Resolving a substitution means reading the pipeline's resource location and comparing
+     * strings. Vanilla's {@code RenderPipeline} objects are singletons, so the answer only has
+     * to be computed once each; a pipeline with no substitution maps to itself rather than
+     * being absent, so a miss is never re-resolved. Touched only from the render thread, which
+     * is where both {@code setPipeline} and the pack swap run.
+     */
+    private final Map<RenderPipeline, RenderPipeline> sceneSubstitutions = new IdentityHashMap<>();
+
     private ShaderRuntime() {
         ThreadFactory factory = runnable -> {
             Thread thread = new Thread(runnable, "Retina shader compiler");
@@ -387,6 +408,9 @@ public final class ShaderRuntime {
                 underwaterPipeline,
                 shadowPipeline, entityShadowPipeline, Map.copyOf(postPipelines), Map.copyOf(sources), storage,
                 framebuffer, shadowFramebuffer);
+            // Both caches describe the pack that was active a moment ago.
+            sceneSubstitutions.clear();
+            capturingDrawState = entityShadowPipeline != null;
             if (previous != null) {
                 // Keep buffers alive for several rotations so already-submitted command
                 // buffers cannot observe a destroyed allocation during a live pack switch.
@@ -802,6 +826,8 @@ public final class ShaderRuntime {
         restoreMainColorTarget();
         ActivePack previous = active;
         active = null;
+        sceneSubstitutions.clear();
+        capturingDrawState = false;
         frameUniforms = null;
         if (previous != null) {
             retiredResources.addLast(new RetiredResources(previous.uniformStorage(),
@@ -836,8 +862,21 @@ public final class ShaderRuntime {
     /** Replaces only dedicated, ABI-validated scene stages while colortex0 owns the scene. */
     public RenderPipeline scenePipelineFor(RenderPipeline original) {
         ActivePack current = active;
-        if (current == null || mainColorRedirect == null
-            || original.getPrimitiveTopology() != PrimitiveTopology.QUADS) {
+        if (current == null || mainColorRedirect == null) {
+            return original;
+        }
+        RenderPipeline cached = sceneSubstitutions.get(original);
+        if (cached != null) {
+            return cached;
+        }
+        RenderPipeline resolved = resolveScenePipeline(current, original);
+        sceneSubstitutions.put(original, resolved);
+        return resolved;
+    }
+
+    /** Works out the substitution for one pipeline; called once per pipeline per pack. */
+    private RenderPipeline resolveScenePipeline(ActivePack current, RenderPipeline original) {
+        if (original.getPrimitiveTopology() != PrimitiveTopology.QUADS) {
             return original;
         }
         String path = original.getLocation().getPath();
@@ -872,6 +911,16 @@ public final class ShaderRuntime {
             LOGGER.info("Routing {} through gbuffers_entities", original.getLocation());
         }
         return current.entityPipeline();
+    }
+
+    /**
+     * Whether vanilla draw state currently needs mirroring.
+     *
+     * <p>The per-draw hooks call this before anything else. When no pack casts entity shadows —
+     * which includes every session with shaders off — the whole capture path folds away.
+     */
+    public static boolean isCapturingDrawState() {
+        return capturingDrawState;
     }
 
     /** Mirrors the resources of an eligible entity pass until its indexed draws are issued. */

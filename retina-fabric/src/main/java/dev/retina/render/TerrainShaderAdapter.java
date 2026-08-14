@@ -7,6 +7,8 @@ package dev.retina.render;
 
 import dev.retina.core.translate.GlslLexer;
 import dev.retina.core.translate.TranslatedSource;
+import dev.retina.core.translate.VulkanTranslator;
+import dev.retina.core.uniform.Std140Layout;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,8 +21,11 @@ public final class TerrainShaderAdapter {
     private static final Pattern UNIFORM_BLOCK = Pattern.compile(
         "layout\\s*\\(\\s*std140\\s*,[^)]*\\)\\s*uniform\\s+RetinaUniforms\\s*\\{"
             + "(?<body>.*?)\\}\\s*;", Pattern.DOTALL);
+    // The array suffix is optional but must be captured: a member emitted as `vec3 lights[4]`
+    // and collected as a bare `vec3 lights` would be laid out as one element and read as four.
     private static final Pattern MEMBER = Pattern.compile(
-        "(?m)^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*;\\s*$");
+        "(?m)^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+            + "\\s*(?:\\[\\s*([0-9]+)\\s*\\])?\\s*;\\s*$");
     private static final Pattern PUSH_BLOCK = Pattern.compile(
         "layout\\s*\\(\\s*push_constant\\s*\\)\\s*uniform\\s+RetinaDrawConstants\\s*\\{"
             + ".*?\\}\\s*retina_draw\\s*;", Pattern.DOTALL);
@@ -34,8 +39,9 @@ public final class TerrainShaderAdapter {
     }
 
     /** Reads the generated block members before all programs are changed to the union block. */
-    public static Map<String, String> collectUniformMembers(List<TranslatedSource> sources) {
-        Map<String, String> members = new LinkedHashMap<>();
+    public static List<Std140Layout.Declaration> collectUniformMembers(
+        List<TranslatedSource> sources) {
+        Map<String, Std140Layout.Declaration> members = new LinkedHashMap<>();
         for (TranslatedSource source : sources) {
             Matcher block = UNIFORM_BLOCK.matcher(source.text());
             if (!block.find()) {
@@ -45,14 +51,19 @@ public final class TerrainShaderAdapter {
             while (member.find()) {
                 String type = member.group(1);
                 String name = member.group(2);
-                String previous = members.putIfAbsent(name, type);
-                if (previous != null && !previous.equals(type)) {
+                int arrayLength = member.group(3) == null ? 0
+                    : Integer.parseInt(member.group(3));
+                Std140Layout.Declaration declaration =
+                    new Std140Layout.Declaration(name, type, arrayLength);
+                Std140Layout.Declaration previous = members.putIfAbsent(name, declaration);
+                if (previous != null && !previous.equals(declaration)) {
                     throw new IllegalArgumentException("uniform '" + name
-                        + "' has incompatible types " + previous + " and " + type);
+                        + "' has incompatible declarations " + previous.glslType() + " and "
+                        + type);
                 }
             }
         }
-        return members;
+        return List.copyOf(members.values());
     }
 
     public static String adapt(TranslatedSource translated, TerrainUniformLayout uniforms,
@@ -83,6 +94,9 @@ public final class TerrainShaderAdapter {
             // In particular ftransform() is emitted there and must see retina_Vertex before
             // its own function definition.
             source = LEGACY_INPUT.matcher(source).replaceAll("$1 $2;");
+            // Sodium's compact terrain format supplies none of the pack's own attributes, so
+            // they become defined globals rather than inputs the pipeline cannot feed.
+            source = CustomAttributes.demote(source, VulkanTranslator.CUSTOM_ATTRIBUTE_BASE);
             source = injectVertexAbi(source);
         }
         return source;

@@ -96,6 +96,9 @@ public final class EntityShaderAdapter {
             return source;
         }
         source = LEGACY_INPUT.matcher(source).replaceAll("");
+        // DefaultVertexFormat.ENTITY supplies none of the pack's own attributes.
+        source = CustomAttributes.demote(source,
+            dev.retina.core.translate.VulkanTranslator.CUSTOM_ATTRIBUTE_BASE);
         Matcher main = MAIN.matcher(source);
         if (!main.find()) {
             throw new IllegalArgumentException("entity vertex shader has no main() function");

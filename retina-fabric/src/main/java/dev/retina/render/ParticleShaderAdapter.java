@@ -91,6 +91,9 @@ public final class ParticleShaderAdapter {
             return source;
         }
         source = LEGACY_INPUT.matcher(source).replaceAll("");
+        // DefaultVertexFormat.PARTICLE supplies none of the pack's own attributes.
+        source = CustomAttributes.demote(source,
+            dev.retina.core.translate.VulkanTranslator.CUSTOM_ATTRIBUTE_BASE);
         Matcher main = MAIN.matcher(source);
         if (!main.find()) {
             throw new IllegalArgumentException("particle vertex shader has no main() function");

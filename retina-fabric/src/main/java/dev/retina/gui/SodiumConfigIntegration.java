@@ -28,10 +28,6 @@ import java.util.EnumSet;
 public final class SodiumConfigIntegration implements ConfigEntryPoint {
     private static final Identifier ICON = Identifier.fromNamespaceAndPath("retina", "icon");
     private static final Identifier PROFILE = Identifier.fromNamespaceAndPath("retina", "profile");
-    private static final Identifier DEBUG_OVERLAY =
-        Identifier.fromNamespaceAndPath("retina", "debug_overlay");
-    private static final Identifier PARALLEL_COMPILATION =
-        Identifier.fromNamespaceAndPath("retina", "parallel_compilation");
 
     @Override
     public void registerConfigLate(ConfigBuilder builder) {
@@ -47,6 +43,10 @@ public final class SodiumConfigIntegration implements ConfigEntryPoint {
             .setScreenConsumer(parent -> Minecraft.getInstance().setScreenAndShow(
                 new ShaderPackScreen(parent))));
 
+        // Only the profile selector appears here, because it is the only renderer-level setting
+        // that currently changes what Retina does. A debug overlay and a parallel-compilation
+        // pool are both wanted, and neither exists yet; listing a control for them would let a
+        // user toggle it, see no change, and reasonably conclude Retina is broken.
         retina.addPage(builder.createOptionPage()
             .setName(Component.translatable("retina.sodium.page.renderer"))
             .addOptionGroup(builder.createOptionGroup()
@@ -61,23 +61,6 @@ public final class SodiumConfigIntegration implements ConfigEntryPoint {
                         "retina.sodium.profile." + profile.name().toLowerCase(java.util.Locale.ROOT)))
                     .setBinding(profile -> RetinaClient.setConfig(
                             RetinaClient.config().withProfile(profile)),
-                        () -> RetinaClient.config().profile()))
-                .addOption(builder.createBooleanOption(DEBUG_OVERLAY)
-                    .setName(Component.translatable("retina.sodium.option.debugOverlay"))
-                    .setTooltip(Component.translatable("retina.sodium.option.debugOverlay.tooltip"))
-                    .setImpact(OptionImpact.LOW)
-                    .setDefaultValue(false)
-                    .setBinding(enabled -> RetinaClient.setConfig(
-                            RetinaClient.config().withDebugOverlay(enabled)),
-                        () -> RetinaClient.config().debugOverlay()))
-                .addOption(builder.createBooleanOption(PARALLEL_COMPILATION)
-                    .setName(Component.translatable("retina.sodium.option.parallelCompilation"))
-                    .setTooltip(Component.translatable(
-                        "retina.sodium.option.parallelCompilation.tooltip"))
-                    .setImpact(OptionImpact.MEDIUM)
-                    .setDefaultValue(true)
-                    .setBinding(enabled -> RetinaClient.setConfig(
-                            RetinaClient.config().withParallelCompilation(enabled)),
-                        () -> RetinaClient.config().parallelCompilation()))));
+                        () -> RetinaClient.config().profile()))));
     }
 }
