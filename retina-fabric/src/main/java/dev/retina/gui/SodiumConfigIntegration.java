@@ -61,6 +61,10 @@ public final class SodiumConfigIntegration implements ConfigEntryPoint {
                         "retina.sodium.profile." + profile.name().toLowerCase(java.util.Locale.ROOT)))
                     .setBinding(profile -> RetinaClient.setConfig(
                             RetinaClient.config().withProfile(profile)),
-                        () -> RetinaClient.config().profile()))));
+                        () -> RetinaClient.config().profile())
+                    // Every stateful Sodium option requires a storage handler, called once its
+                    // binding has been saved. RetinaConfig.save() already runs synchronously
+                    // inside setConfig() above, so there is nothing left to flush here.
+                    .setStorageHandler(() -> { }))));
     }
 }
