@@ -7,6 +7,7 @@
     "defaultRequire": 1
   },
   "client": [
+    "minecraft.CameraMixin",
     "blaze3d.CommandEncoderAccessor",
     "blaze3d.RenderTargetColorAccessor",
     "blaze3d.RenderPassMixin",

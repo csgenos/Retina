@@ -45,6 +45,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.DynamicUniformStorage;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.level.material.FogType;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -73,6 +74,10 @@ public final class ShaderRuntime {
     private static final BindGroupLayout RETINA_UNIFORMS = BindGroupLayout.builder()
         .withUniform("RetinaUniforms", UniformType.UNIFORM_BUFFER)
         .build();
+    private static final BindGroupLayout UNDERWATER_SAMPLERS = BindGroupLayout.builder()
+        .withSampler("SceneColor")
+        .withSampler("SceneDepth")
+        .build();
     private static final ShaderRuntime INSTANCE = new ShaderRuntime();
 
     public enum State {
@@ -89,6 +94,7 @@ public final class ShaderRuntime {
                               RenderPipeline translucentParticlePipeline,
                               RenderPipeline weatherDepthWritePipeline,
                               RenderPipeline weatherNoDepthWritePipeline,
+                              RenderPipeline underwaterPipeline,
                               RenderPipeline shadowPipeline,
                               RenderPipeline entityShadowPipeline,
                               Map<PreparedTerrainPack.PostProgram, RenderPipeline> postPipelines,
@@ -171,6 +177,7 @@ public final class ShaderRuntime {
     private boolean shadowRendering;
     private boolean prepareRendered;
     private boolean shadowCompRendered;
+    private FogType cameraMedium = FogType.NONE;
     private boolean loggedTerrainMrt;
     private boolean loggedPostChain;
     private boolean loggedShadowPass;
@@ -320,6 +327,10 @@ public final class ShaderRuntime {
                 precompile("entity shadow", entityShadowPipeline, source);
                 sources.put(entityShadowPipeline, source);
             }
+            RenderPipeline underwaterPipeline = buildUnderwaterPipeline(prepared);
+            ShaderSource underwaterSource = underwaterShaderSource(underwaterPipeline);
+            precompile("underwater composition", underwaterPipeline, underwaterSource);
+            sources.put(underwaterPipeline, underwaterSource);
             for (PreparedTerrainPack.PostProgram prepare : prepared.preparePrograms()) {
                 RenderPipeline pipeline = buildPostPipeline(prepared, prepare, false,
                     mainTarget.getColorTexture().getFormat());
@@ -373,6 +384,7 @@ public final class ShaderRuntime {
             active = new ActivePack(prepared, Map.copyOf(pipelines), entityPipeline,
                 opaqueParticlePipeline, translucentParticlePipeline,
                 weatherDepthWritePipeline, weatherNoDepthWritePipeline,
+                underwaterPipeline,
                 shadowPipeline, entityShadowPipeline, Map.copyOf(postPipelines), Map.copyOf(sources), storage,
                 framebuffer, shadowFramebuffer);
             if (previous != null) {
@@ -480,6 +492,24 @@ public final class ShaderRuntime {
             }
         }
         return builder.build();
+    }
+
+    /** Renderer-owned underwater medium pass; packs remain free to add later stylisation. */
+    private static RenderPipeline buildUnderwaterPipeline(PreparedTerrainPack pack) {
+        String suffix = pack.contentHash().substring(0,
+            Math.min(12, pack.contentHash().length())) + "/underwater-medium";
+        Identifier shader = Identifier.fromNamespaceAndPath("retina", suffix);
+        return RenderPipeline.builder()
+            .withBindGroupLayout(UNDERWATER_SAMPLERS)
+            .withLocation(Identifier.fromNamespaceAndPath("retina", suffix))
+            .withVertexShader(shader)
+            .withFragmentShader(shader)
+            .withCull(false)
+            .withDepthStencilState(Optional.empty())
+            .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+            .withColorTargetState(new ColorTargetState(Optional.empty(),
+                com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, -1))
+            .build();
     }
 
     private static RenderPipeline buildShadowPipeline(PreparedTerrainPack pack,
@@ -632,6 +662,42 @@ public final class ShaderRuntime {
                 return null;
             }
             return type == ShaderType.VERTEX ? program.vertexSource() : program.fragmentSource();
+        };
+    }
+
+    private static ShaderSource underwaterShaderSource(RenderPipeline pipeline) {
+        String vertex = """
+            #version 450
+            const vec2 POSITIONS[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+            layout(location = 0) out vec2 uv;
+            void main() {
+                vec2 position = POSITIONS[gl_VertexIndex];
+                gl_Position = vec4(position, 0.0, 1.0);
+                uv = position * 0.5 + 0.5;
+            }
+            """;
+        String fragment = """
+            #version 450
+            layout(binding = 0) uniform sampler2D SceneColor;
+            layout(binding = 1) uniform sampler2D SceneDepth;
+            layout(location = 0) in vec2 uv;
+            layout(location = 0) out vec4 fragColor;
+            void main() {
+                vec4 scene = texture(SceneColor, uv);
+                // Minecraft's world depth is reversed-Z: distant visible geometry approaches 0.
+                float depth = clamp(texture(SceneDepth, uv).r, 0.0, 1.0);
+                float distanceFog = pow(1.0 - depth, 0.22);
+                float medium = smoothstep(0.08, 0.76, distanceFog);
+                vec3 waterMedium = vec3(0.025, 0.115, 0.285);
+                scene.rgb = mix(scene.rgb, waterMedium, medium * 0.82);
+                fragColor = scene;
+            }
+            """;
+        return (id, type) -> {
+            if (!id.equals(pipeline.getVertexShader()) && !id.equals(pipeline.getFragmentShader())) {
+                return null;
+            }
+            return type == ShaderType.VERTEX ? vertex : fragment;
         };
     }
 
@@ -911,6 +977,7 @@ public final class ShaderRuntime {
         shadowView = null;
         prepareRendered = false;
         shadowCompRendered = false;
+        cameraMedium = FogType.NONE;
     }
 
     /**
@@ -956,6 +1023,11 @@ public final class ShaderRuntime {
         access.retina$colorTexture(redirect.texture());
         access.retina$colorTextureView(redirect.view());
         mainColorRedirect = null;
+    }
+
+    /** Captured from Minecraft's main camera so scene composition follows vanilla medium state. */
+    public void setCameraMedium(FogType medium) {
+        cameraMedium = medium;
     }
 
     /** Replaces Sodium's single-colour terrain pass with the validated MRT descriptor. */
@@ -1139,6 +1211,7 @@ public final class ShaderRuntime {
         }
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         try {
+            renderUnderwaterComposition(current, encoder);
             for (PreparedTerrainPack.PostProgram program
                 : current.prepared().deferredPrograms()) {
                 executePost(current, encoder, program, uniforms, false);
@@ -1163,6 +1236,37 @@ public final class ShaderRuntime {
                 current.prepared().name(), e);
             deactivate(failedGeneration);
         }
+    }
+
+    /** Applies depth-aware attenuation only when Minecraft reports a submerged camera. */
+    private void renderUnderwaterComposition(ActivePack current, CommandEncoder encoder) {
+        if (currentCameraMedium(current) != FogType.WATER) {
+            return;
+        }
+        com.mojang.blaze3d.pipeline.RenderTarget main =
+            Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        if (main.getDepthTextureView() == null) {
+            return;
+        }
+        ColortexFramebuffer framebuffer = current.framebuffer();
+        RenderPassDescriptor descriptor = RenderPassDescriptor.create(() -> "Retina underwater medium");
+        descriptor.withColorAttachment(framebuffer.alternateView(0));
+        descriptor.withRenderArea(new RenderPass.RenderArea(0, 0, framebuffer.targetWidth(0),
+            framebuffer.targetHeight(0)));
+        try (RenderPass pass = encoder.createRenderPass(descriptor)) {
+            pass.setPipeline(current.underwaterPipeline());
+            GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+            pass.bindTexture("SceneColor", framebuffer.mainView(0), sampler);
+            pass.bindTexture("SceneDepth", main.getDepthTextureView(), sampler);
+            pass.draw(3, 1, 0, 0);
+        }
+        framebuffer.finishPost(new PreparedTerrainPack.PostProgram("retina_underwater", "", "",
+            List.of(0), List.of(), Map.of(), new dev.retina.core.target.RenderTargetDirectives.PassScale(1, 0, 0),
+            Map.of(), true));
+    }
+
+    private FogType currentCameraMedium(ActivePack current) {
+        return current == active ? cameraMedium : FogType.NONE;
     }
 
     /** Executes prepare stages once, immediately before Sodium's first terrain invocation. */
