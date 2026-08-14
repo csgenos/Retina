@@ -111,7 +111,7 @@ public final class VulkanTranslator {
         Collected collected = collectDeclarations(tokens, resolved, warnings);
         rewriteIdentifiers(tokens, resolved, collected, warnings);
         rewriteFragmentOutputs(tokens, resolved, collected, warnings);
-        injectAlphaTest(tokens, resolved, warnings);
+        injectAlphaTest(tokens, resolved, collected, warnings);
 
         String prologue = buildPrologue(resolved, collected, sourceVersion, warnings);
         int prologueLines = (int) prologue.lines().count();
@@ -146,10 +146,14 @@ public final class VulkanTranslator {
     // Declaration collection
     // ------------------------------------------------------------------
 
+    /** A uniform-block member's type, and its length when it is an array. */
+    private record MemberType(String glslType, int arrayLength) {
+    }
+
     /** What a scan of the translation unit found. */
     private static final class Collected {
         /** Non-opaque uniforms that must move into the generated block. */
-        final Map<String, String> blockUniforms = new LinkedHashMap<>();
+        final Map<String, MemberType> blockUniforms = new LinkedHashMap<>();
         /** Opaque uniforms that stay standalone and need a set/binding. */
         final Map<String, String> opaqueUniforms = new LinkedHashMap<>();
         /**
@@ -166,10 +170,74 @@ public final class VulkanTranslator {
         boolean usesFragColor;
         /** Highest {@code gl_FragData} index referenced, or -1. */
         int maxFragDataIndex = -1;
-        /** Whether an explicit {@code out} for location 0 already exists. */
+        /** The line the highest {@code gl_FragData} index was written on. */
+        int maxFragDataLine;
+        /** Whether the pack declares its own fragment outputs. */
         boolean hasExplicitOutputs;
+        /** Pack-declared fragment outputs by location, so the alpha test can find location 0. */
+        final Map<Integer, String> fragmentOutputs = new LinkedHashMap<>();
+        /** The next location to hand a pack-declared fragment output. */
+        int nextFragmentOutput;
         /** Vertex attributes referenced through legacy {@code gl_*} names. */
         final Set<String> usedLegacyAttributes = new LinkedHashSet<>();
+        /** Locations for pack-declared vertex attributes, keyed by name. */
+        Map<String, Integer> attributeLocations = Map.of();
+        /** Pack-declared vertex attributes that were qualified, name to type. */
+        final Map<String, String> declaredAttributes = new LinkedHashMap<>();
+    }
+
+    /**
+     * The first location available to a pack-declared vertex attribute.
+     *
+     * <p>Locations 0..7 are reserved for the legacy {@code gl_*} attributes in
+     * {@link LegacyBuiltins}, so a pack's own {@code mc_Entity} or {@code at_tangent} has to
+     * start above them or the two would alias.
+     */
+    public static final int CUSTOM_ATTRIBUTE_BASE = 8;
+
+    /**
+     * Assigns locations to the vertex attributes a translation unit declares.
+     *
+     * <p>Sorted by name so the assignment depends only on the set of names, never on the order
+     * the declarations happen to appear in — the same property the varying layout needs, and
+     * for the same reason: the pipeline cache key includes the layout.
+     */
+    private static Map<String, Integer> vertexAttributeLocations(List<GlslLexer.Token> tokens) {
+        Map<String, VaryingLayout.Declaration> found = new java.util.TreeMap<>();
+        int braceDepth = 0;
+        int parenDepth = 0;
+        for (int i = 0; i < tokens.size(); i++) {
+            GlslLexer.Token token = tokens.get(i);
+            if (token.isPunctuation("{")) {
+                braceDepth++;
+            } else if (token.isPunctuation("}")) {
+                braceDepth--;
+            } else if (token.isPunctuation("(")) {
+                parenDepth++;
+            } else if (token.isPunctuation(")")) {
+                parenDepth--;
+            } else if (braceDepth == 0 && parenDepth == 0
+                && token.kind() == GlslLexer.Kind.IDENTIFIER
+                && (token.text().equals("attribute") || token.text().equals("in"))
+                && !alreadyQualified(tokens, i)) {
+                InterfaceDeclaration declaration = parseInterfaceDeclaration(tokens, i);
+                if (declaration == null) {
+                    continue;
+                }
+                for (Declarator declarator : declaration.declarators()) {
+                    found.put(declarator.name(), new VaryingLayout.Declaration(declarator.name(),
+                        declaration.glslType(), declarator.arrayLength()));
+                }
+                i = declaration.semicolon();
+            }
+        }
+        Map<String, Integer> locations = new LinkedHashMap<>();
+        int next = CUSTOM_ATTRIBUTE_BASE;
+        for (VaryingLayout.Declaration declaration : found.values()) {
+            locations.put(declaration.name(), next);
+            next += VaryingLayout.locationCount(declaration);
+        }
+        return locations;
     }
 
     /**
@@ -179,6 +247,9 @@ public final class VulkanTranslator {
     private Collected collectDeclarations(List<GlslLexer.Token> tokens, Options options,
                                           List<String> warnings) {
         Collected collected = new Collected();
+        if (options.stage().readsVertexAttributes()) {
+            collected.attributeLocations = vertexAttributeLocations(tokens);
+        }
         int braceDepth = 0;
         int parenDepth = 0;
 
@@ -205,14 +276,15 @@ public final class VulkanTranslator {
                 continue;
             }
             String keyword = token.text();
-            if (keyword.equals("varying") || keyword.equals("in") || keyword.equals("out")) {
+            if (keyword.equals("varying") || keyword.equals("in") || keyword.equals("out")
+                || keyword.equals("attribute")) {
                 if (alreadyQualified(tokens, i)) {
                     if (keyword.equals("out") && options.stage().writesFragmentOutputs()) {
-                        collected.hasExplicitOutputs = true;
+                        recordQualifiedOutput(tokens, i, collected);
                     }
                     continue;
                 }
-                i = qualifyVarying(tokens, i, options, collected, warnings);
+                i = qualifyInterface(tokens, i, options, collected, warnings);
                 continue;
             }
             if (!keyword.equals("uniform")) {
@@ -225,54 +297,138 @@ public final class VulkanTranslator {
     }
 
     /**
-     * Adds an explicit location to an unqualified user in/out declaration.
+     * Adds explicit locations to an unqualified user attribute/in/out declaration.
+     *
+     * <p>Vulkan GLSL rejects a user input or output with no location, so every one of these has
+     * to be given one, and the two stages of a program have to arrive at the same answer
+     * independently. Three interfaces are qualified here, from three different sources:
+     * vertex attributes from {@link #vertexAttributeLocations}, fragment outputs in declaration
+     * order, and everything else from the program's shared {@link VaryingLayout}.
      *
      * @return the index of the declaration's semicolon, or {@code start} when it was not a
      *         declaration after all
      */
-    private int qualifyVarying(List<GlslLexer.Token> tokens, int start, Options options,
-                               Collected collected, List<String> warnings) {
-        VaryingDeclaration declaration = parseVaryingDeclaration(tokens, start);
+    private int qualifyInterface(List<GlslLexer.Token> tokens, int start, Options options,
+                                 Collected collected, List<String> warnings) {
+        InterfaceDeclaration declaration = parseInterfaceDeclaration(tokens, start);
         if (declaration == null) {
             return start;
         }
-        String direction = tokens.get(start).text().equals("varying")
-            ? options.stage().varyingDirection()
-            : tokens.get(start).text();
+        String keyword = tokens.get(start).text();
+        String direction = switch (keyword) {
+            case "varying" -> options.stage().varyingDirection();
+            case "attribute" -> "in";
+            default -> keyword;
+        };
+        int line = tokens.get(start).line();
+
         if (direction.equals("out") && options.stage().writesFragmentOutputs()) {
-            // A fragment `out` is a colour attachment, not a varying; its location comes from
-            // the pack's DRAWBUFFERS directive, which the pack itself is responsible for
-            // matching when it declares outputs by hand.
-            collected.hasExplicitOutputs = true;
-            return declaration.semicolon();
+            return qualifyFragmentOutputs(tokens, start, declaration, collected);
         }
-        Optional<VaryingLayout.Slot> slot = options.varyings() == null
-            ? Optional.empty()
-            : options.varyings().slot(declaration.name());
-        if (slot.isEmpty()) {
-            warnings.add("line " + tokens.get(start).line() + ": varying '"
-                + declaration.name() + "' has no assigned location; Retina could not classify"
-                + " its declaration and left it unqualified");
-            return declaration.semicolon();
+        if (direction.equals("in") && options.stage().readsVertexAttributes()) {
+            return qualifyVertexAttributes(tokens, start, declaration, collected, warnings, line);
         }
-        GlslLexer.Token keyword = tokens.get(start);
-        tokens.set(start, keyword.withText(
-            "layout(location = " + slot.get().location() + ") " + direction));
+
+        List<String> replacements = new ArrayList<>();
+        for (Declarator declarator : declaration.declarators()) {
+            Optional<VaryingLayout.Slot> slot = options.varyings() == null
+                ? Optional.empty()
+                : options.varyings().slot(declarator.name());
+            if (slot.isEmpty()) {
+                warnings.add("line " + line + ": varying '" + declarator.name()
+                    + "' has no assigned location; Retina could not classify its declaration"
+                    + " and left it unqualified");
+                return declaration.semicolon();
+            }
+            replacements.add("layout(location = " + slot.get().location() + ") " + direction
+                + " " + declare(declaration.glslType(), declarator) + ";");
+        }
+        rewriteDeclaration(tokens, start, declaration.semicolon(), replacements);
         return declaration.semicolon();
     }
 
-    /** A parsed in/out/varying declaration. */
-    private record VaryingDeclaration(String name, String glslType, int arrayLength,
-                                      int semicolon) {
+    /** Qualifies pack-declared fragment outputs, recording which name is location 0. */
+    private static int qualifyFragmentOutputs(List<GlslLexer.Token> tokens, int start,
+                                              InterfaceDeclaration declaration,
+                                              Collected collected) {
+        collected.hasExplicitOutputs = true;
+        List<String> replacements = new ArrayList<>();
+        for (Declarator declarator : declaration.declarators()) {
+            int location = collected.nextFragmentOutput++;
+            collected.fragmentOutputs.putIfAbsent(location, declarator.name());
+            replacements.add("layout(location = " + location + ") out "
+                + declare(declaration.glslType(), declarator) + ";");
+        }
+        rewriteDeclaration(tokens, start, declaration.semicolon(), replacements);
+        return declaration.semicolon();
+    }
+
+    /** Qualifies pack-declared vertex attributes from the unit's deterministic layout. */
+    private static int qualifyVertexAttributes(List<GlslLexer.Token> tokens, int start,
+                                               InterfaceDeclaration declaration,
+                                               Collected collected, List<String> warnings,
+                                               int line) {
+        List<String> replacements = new ArrayList<>();
+        for (Declarator declarator : declaration.declarators()) {
+            Integer location = collected.attributeLocations.get(declarator.name());
+            if (location == null) {
+                warnings.add("line " + line + ": vertex attribute '" + declarator.name()
+                    + "' could not be assigned a location and was left unqualified");
+                return declaration.semicolon();
+            }
+            collected.declaredAttributes.putIfAbsent(declarator.name(),
+                declaration.glslType());
+            replacements.add("layout(location = " + location + ") in "
+                + declare(declaration.glslType(), declarator) + ";");
+        }
+        rewriteDeclaration(tokens, start, declaration.semicolon(), replacements);
+        return declaration.semicolon();
+    }
+
+    private static String declare(String glslType, Declarator declarator) {
+        return glslType + " " + declarator.name()
+            + (declarator.arrayLength() > 0 ? "[" + declarator.arrayLength() + "]" : "");
     }
 
     /**
-     * Parses the declaration beginning at an in/out/varying keyword.
+     * Replaces a declaration with one or more generated declarations.
      *
-     * @return null when the tokens are not a single-variable declaration
+     * <p>The whole original range is blanked and the replacement text is attached to the first
+     * token, so a declaration that introduced several names becomes several fully qualified
+     * declarations without moving any line: {@link #blank} keeps every newline the range held.
      */
-    private static VaryingDeclaration parseVaryingDeclaration(List<GlslLexer.Token> tokens,
-                                                              int start) {
+    private static void rewriteDeclaration(List<GlslLexer.Token> tokens, int start, int semicolon,
+                                           List<String> replacements) {
+        GlslLexer.Token first = tokens.get(start);
+        blank(tokens, start, semicolon);
+        tokens.set(start, first.withText(String.join(" ", replacements)));
+    }
+
+    /** One declarator in a declaration: a name and, when it is an array, its length. */
+    private record Declarator(String name, int arrayLength) {
+    }
+
+    /**
+     * A parsed in/out/varying/attribute declaration.
+     *
+     * <p>{@code declarators} holds every name the declaration introduces. A declaration such as
+     * {@code varying vec2 a, b;} introduces two, and giving the pair one shared location
+     * qualifier makes them overlap, so each has to be tracked and qualified separately.
+     */
+    private record InterfaceDeclaration(List<Declarator> declarators, String glslType,
+                                        int semicolon) {
+        Declarator first() {
+            return declarators.getFirst();
+        }
+    }
+
+    /**
+     * Parses the declaration beginning at an in/out/varying/attribute keyword.
+     *
+     * @return null when the tokens are not a variable declaration
+     */
+    private static InterfaceDeclaration parseInterfaceDeclaration(List<GlslLexer.Token> tokens,
+                                                                  int start) {
         int i = GlslLexer.nextCode(tokens, start + 1);
         while (i >= 0 && i < tokens.size()
             && tokens.get(i).kind() == GlslLexer.Kind.IDENTIFIER
@@ -284,29 +440,19 @@ public final class VulkanTranslator {
             return null;
         }
         String type = tokens.get(i).text();
-        int nameIndex = GlslLexer.nextCode(tokens, i + 1);
-        if (nameIndex < 0 || nameIndex >= tokens.size()
-            || tokens.get(nameIndex).kind() != GlslLexer.Kind.IDENTIFIER) {
+        int afterType = GlslLexer.nextCode(tokens, i + 1);
+        if (afterType < 0 || afterType >= tokens.size()) {
             return null;
         }
-        String name = tokens.get(nameIndex).text();
-        int semicolon = skipToSemicolon(tokens, nameIndex);
+        int semicolon = skipToSemicolon(tokens, i);
         if (semicolon < 0) {
             return null;
         }
-        int arrayLength = 0;
-        int bracket = GlslLexer.nextCode(tokens, nameIndex + 1);
-        if (bracket >= 0 && bracket < semicolon && tokens.get(bracket).isPunctuation("[")) {
-            int size = GlslLexer.nextCode(tokens, bracket + 1);
-            if (size >= 0 && tokens.get(size).kind() == GlslLexer.Kind.NUMBER) {
-                try {
-                    arrayLength = Integer.parseInt(tokens.get(size).text());
-                } catch (NumberFormatException ignored) {
-                    arrayLength = 0;
-                }
-            }
+        List<Declarator> declarators = declaredNames(tokens, afterType, semicolon);
+        if (declarators.isEmpty()) {
+            return null;
         }
-        return new VaryingDeclaration(name, type, arrayLength, semicolon);
+        return new InterfaceDeclaration(declarators, type, semicolon);
     }
 
     /**
@@ -339,10 +485,15 @@ public final class VulkanTranslator {
                 if (!isVarying || alreadyQualified(tokens, i)) {
                     continue;
                 }
-                VaryingDeclaration declaration = parseVaryingDeclaration(tokens, i);
+                InterfaceDeclaration declaration = parseInterfaceDeclaration(tokens, i);
                 if (declaration != null) {
-                    out.add(new VaryingLayout.Declaration(declaration.name(),
-                        declaration.glslType(), declaration.arrayLength()));
+                    // Every declarator, not just the first: `varying vec2 a, b;` introduces two
+                    // varyings, and reserving a slot for only one of them overlaps the other
+                    // onto an occupied location.
+                    for (Declarator declarator : declaration.declarators()) {
+                        out.add(new VaryingLayout.Declaration(declarator.name(),
+                            declaration.glslType(), declarator.arrayLength()));
+                    }
                     i = declaration.semicolon();
                 }
             }
@@ -354,6 +505,71 @@ public final class VulkanTranslator {
     public static List<VaryingLayout.Declaration> collectVaryings(String source,
                                                                   ShaderStage stage) {
         return collectVaryings(GlslLexer.tokenize(source), stage);
+    }
+
+    /**
+     * Records a fragment output the pack qualified itself.
+     *
+     * <p>Needed for the same reason as {@link #qualifyFragmentOutputs}: the injected alpha test
+     * has to name the variable bound to location 0, and when the pack declares its own outputs
+     * that name is the pack's, not Retina's.
+     */
+    private static void recordQualifiedOutput(List<GlslLexer.Token> tokens, int index,
+                                              Collected collected) {
+        collected.hasExplicitOutputs = true;
+        InterfaceDeclaration declaration = parseInterfaceDeclaration(tokens, index);
+        if (declaration == null) {
+            return;
+        }
+        int location = qualifiedLocation(tokens, index).orElse(collected.nextFragmentOutput);
+        for (Declarator declarator : declaration.declarators()) {
+            collected.fragmentOutputs.putIfAbsent(location, declarator.name());
+            location++;
+        }
+        collected.nextFragmentOutput = Math.max(collected.nextFragmentOutput, location);
+    }
+
+    /** Reads {@code location = n} out of the layout qualifier preceding {@code index}. */
+    private static Optional<Integer> qualifiedLocation(List<GlslLexer.Token> tokens, int index) {
+        int close = GlslLexer.previousCode(tokens, index - 1);
+        if (close < 0 || !tokens.get(close).isPunctuation(")")) {
+            return Optional.empty();
+        }
+        int depth = 0;
+        int open = -1;
+        for (int i = close; i >= 0; i--) {
+            if (tokens.get(i).isPunctuation(")")) {
+                depth++;
+            } else if (tokens.get(i).isPunctuation("(")) {
+                depth--;
+                if (depth == 0) {
+                    open = i;
+                    break;
+                }
+            }
+        }
+        if (open < 0) {
+            return Optional.empty();
+        }
+        for (int i = open + 1; i < close; i++) {
+            if (!tokens.get(i).isIdentifier("location")) {
+                continue;
+            }
+            int equals = GlslLexer.nextCode(tokens, i + 1);
+            if (equals < 0 || !tokens.get(equals).isPunctuation("=")) {
+                continue;
+            }
+            int value = GlslLexer.nextCode(tokens, equals + 1);
+            if (value < 0 || tokens.get(value).kind() != GlslLexer.Kind.NUMBER) {
+                continue;
+            }
+            try {
+                return Optional.of(Integer.parseInt(tokens.get(value).text()));
+            } catch (NumberFormatException ignored) {
+                return Optional.empty();
+            }
+        }
+        return Optional.empty();
     }
 
     /** Whether the declaration at {@code index} is already preceded by a layout qualifier. */
@@ -487,7 +703,7 @@ public final class VulkanTranslator {
             return start;
         }
 
-        List<String> names = declaredNames(tokens, afterType, semicolon);
+        List<Declarator> names = declaredNames(tokens, afterType, semicolon);
         if (names.isEmpty()) {
             return semicolon;
         }
@@ -495,12 +711,12 @@ public final class VulkanTranslator {
         if (GlslTypes.isOpaque(type)) {
             String qualifiers = String.join(", ", packQualifiers.stream()
                 .filter(q -> !q.isBlank()).toList());
-            for (String name : names) {
-                collected.opaqueUniforms.put(name, type);
+            for (Declarator declarator : names) {
+                collected.opaqueUniforms.put(declarator.name(), type);
                 if (!qualifiers.isEmpty()) {
-                    collected.opaqueLayouts.put(name, qualifiers);
+                    collected.opaqueLayouts.put(declarator.name(), qualifiers);
                 }
-                layout.withType(name, type);
+                layout.withType(declarator.name(), type);
             }
             // Blank the declaration; the prologue re-emits it with a set/binding qualifier.
             blank(tokens, declarationStart, semicolon);
@@ -508,15 +724,18 @@ public final class VulkanTranslator {
         }
 
         if (!GlslTypes.isValueType(stripArray(type))) {
-            warnings.add("line " + typeToken.line() + ": uniform '" + names.getFirst()
-                + "' has type '" + type + "', which Retina does not recognise; it was left as"
-                + " a standalone uniform and will fail to link if it is not a Vulkan-legal"
-                + " type");
-            return semicolon;
+            // Refused rather than warned. A default-block struct uniform is illegal in Vulkan,
+            // so leaving it standalone produces a link error whose message names neither the
+            // uniform nor the reason.
+            throw new UnsupportedConstructException("uniform '" + names.getFirst().name()
+                + "' has type '" + type + "', which has no Vulkan uniform-block representation;"
+                + " Retina supports scalar, vector and matrix uniforms, and samplers and images"
+                + " as standalone resources", typeToken.line());
         }
 
-        for (String name : names) {
-            collected.blockUniforms.put(name, type);
+        for (Declarator declarator : names) {
+            collected.blockUniforms.put(declarator.name(),
+                new MemberType(type, declarator.arrayLength()));
         }
         blank(tokens, declarationStart, semicolon);
         return semicolon;
@@ -543,22 +762,53 @@ public final class VulkanTranslator {
         return out;
     }
 
-    /** Collects declarator names between the type and the terminating semicolon. */
-    private static List<String> declaredNames(List<GlslLexer.Token> tokens, int from, int to) {
-        List<String> names = new ArrayList<>();
+    /**
+     * Collects declarator names, and their array lengths, between the type and the semicolon.
+     *
+     * <p>Both GLSL array spellings are recognised. {@code vec3 lights[4]} attaches the length
+     * to the declarator; {@code vec3[4] lights} attaches it to the type, in which case it
+     * applies to every declarator that does not carry its own. Losing the length here is not a
+     * cosmetic omission: the member is then laid out and uploaded as a single element while the
+     * shader indexes four, and {@code lights[0]} on a {@code vec3} is a component access that
+     * compiles.
+     */
+    private static List<Declarator> declaredNames(List<GlslLexer.Token> tokens, int from,
+                                                  int to) {
+        List<Declarator> names = new ArrayList<>();
         int depth = 0;
         boolean expectName = true;
+        Integer bracketLiteral = null;
+        int typeArrayLength = 0;
         for (int i = from; i >= 0 && i < to; i++) {
             GlslLexer.Token token = tokens.get(i);
             if (token.isPunctuation("[")) {
                 depth++;
+                if (depth == 1) {
+                    bracketLiteral = null;
+                }
                 continue;
             }
             if (token.isPunctuation("]")) {
                 depth--;
+                if (depth == 0 && bracketLiteral != null) {
+                    if (names.isEmpty()) {
+                        // The size sits on the type: `vec3[4] lights;`
+                        typeArrayLength = bracketLiteral;
+                    } else {
+                        int last = names.size() - 1;
+                        names.set(last, new Declarator(names.get(last).name(), bracketLiteral));
+                    }
+                }
                 continue;
             }
             if (depth > 0) {
+                if (depth == 1 && token.kind() == GlslLexer.Kind.NUMBER) {
+                    try {
+                        bracketLiteral = Integer.parseInt(token.text());
+                    } catch (NumberFormatException ignored) {
+                        bracketLiteral = null;
+                    }
+                }
                 continue;
             }
             if (token.isPunctuation(",")) {
@@ -566,8 +816,15 @@ public final class VulkanTranslator {
                 continue;
             }
             if (token.kind() == GlslLexer.Kind.IDENTIFIER && expectName) {
-                names.add(token.text());
+                names.add(new Declarator(token.text(), 0));
                 expectName = false;
+            }
+        }
+        if (typeArrayLength > 0) {
+            for (int i = 0; i < names.size(); i++) {
+                if (names.get(i).arrayLength() == 0) {
+                    names.set(i, new Declarator(names.get(i).name(), typeArrayLength));
+                }
             }
         }
         return names;
@@ -587,8 +844,29 @@ public final class VulkanTranslator {
             if (token.kind() == GlslLexer.Kind.NEWLINE) {
                 continue;
             }
-            tokens.set(i, token.withText(""));
+            // A block comment can span lines, and it can sit inside a declaration that moves
+            // into the generated block. Emptying it whole would delete those newlines and
+            // shift every diagnostic after it, which is exactly what the run list exists to
+            // prevent, so keep the line terminators it held.
+            tokens.set(i, token.withText(lineTerminatorsOf(token.text())));
         }
+    }
+
+    /** Just the line terminators in {@code text}, normalised to {@code \n}. */
+    private static String lineTerminatorsOf(String text) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\n') {
+                out.append('\n');
+            } else if (c == '\r') {
+                out.append('\n');
+                if (i + 1 < text.length() && text.charAt(i + 1) == '\n') {
+                    i++;
+                }
+            }
+        }
+        return out.toString();
     }
 
     private static int skipToSemicolon(List<GlslLexer.Token> tokens, int from) {
@@ -739,6 +1017,7 @@ public final class VulkanTranslator {
                 return;
             }
             case "gl_FragData" -> {
+                collected.maxFragDataLine = token.line();
                 int consumed = rewriteFragData(tokens, index, collected);
                 if (consumed < 0) {
                     throw new UnsupportedConstructException(
@@ -833,13 +1112,17 @@ public final class VulkanTranslator {
         int declared = options.drawBuffers().attachmentCount();
         int used = Math.max(collected.maxFragDataIndex + 1, collected.usesFragColor ? 1 : 0);
         if (used > declared) {
-            warnings.add("the program writes fragment output " + (used - 1)
-                + " but its "
+            // Refused rather than warned. The prologue declares one output per draw buffer, so
+            // a surplus write refers to a variable that does not exist and the pack fails with
+            // "undeclared identifier" — a message that says nothing about the real cause.
+            throw new UnsupportedConstructException("the program writes fragment output "
+                + (used - 1) + " but its "
                 + (options.drawBuffers().form() == DrawBuffersDirective.Form.DEFAULT
                     ? "missing DRAWBUFFERS/RENDERTARGETS directive implies only colortex0"
                     : options.drawBuffers().form() + " directive declares only " + declared
                         + " target(s)")
-                + "; the extra writes have no attachment and were dropped");
+                + "; add the target to the directive or remove the write",
+                collected.maxFragDataLine);
         }
     }
 
@@ -850,7 +1133,7 @@ public final class VulkanTranslator {
      * applies to the final value of output 0 and a pack may write it several times.
      */
     private void injectAlphaTest(List<GlslLexer.Token> tokens, Options options,
-                                 List<String> warnings) {
+                                 Collected collected, List<String> warnings) {
         if (!options.stage().writesFragmentOutputs() || !options.alphaTest().discards()) {
             return;
         }
@@ -860,7 +1143,21 @@ public final class VulkanTranslator {
                 + " applied");
             return;
         }
-        String statement = "if (" + options.alphaTest().discardCondition("retina_FragData0.a")
+        // The test applies to whatever is bound to location 0, which is Retina's generated
+        // output only when the pack did not declare its own. Naming the generated one
+        // unconditionally makes every cutout pass in a modern pack fail to compile.
+        String target = "retina_FragData0";
+        if (collected.hasExplicitOutputs) {
+            String declared = collected.fragmentOutputs.get(0);
+            if (declared == null) {
+                throw new UnsupportedConstructException("alphaTest was requested but the"
+                    + " program declares its own fragment outputs and none of them is at"
+                    + " location 0, so Retina cannot tell which value to test",
+                    tokens.get(mainClose).line());
+            }
+            target = declared;
+        }
+        String statement = "if (" + options.alphaTest().discardCondition(target + ".a")
             + ") { discard; } ";
         GlslLexer.Token brace = tokens.get(mainClose);
         tokens.set(mainClose, brace.withText(statement + brace.text()));
@@ -909,28 +1206,29 @@ public final class VulkanTranslator {
 
         // Uniform block. Members keep their original names because the block is unnamed, so
         // no reference in pack source has to change.
-        List<Map.Entry<String, String>> members = new ArrayList<>();
+        List<PrologueMember> members = new ArrayList<>();
         collected.usedBuiltins.stream()
             .filter(LegacyBuiltins.MATRIX_UNIFORMS::containsKey)
             .map(LegacyBuiltins.MATRIX_UNIFORMS::get)
-            .forEach(matrix -> addIfAbsent(members, matrix.glslName(), matrix.glslType()));
+            .forEach(matrix -> addIfAbsent(members, matrix.glslName(), matrix.glslType(), 0));
         if (collected.usedBuiltins.contains("ftransform")) {
-            addIfAbsent(members, "retina_ModelViewProjectionMatrix", "mat4");
+            addIfAbsent(members, "retina_ModelViewProjectionMatrix", "mat4", 0);
         }
-        collected.blockUniforms.forEach((name, type) -> addIfAbsent(members, name, type));
+        collected.blockUniforms.forEach((name, type) ->
+            addIfAbsent(members, name, type.glslType(), type.arrayLength()));
 
         // Scene values the pack did not declare but Retina always supplies are appended so
-        // that the block layout is identical for every program in the pack, which is what
-        // lets set 0 be bound once per frame.
+        // that every program in a pack ends with the same tail of scene members. The block is
+        // laid out and uploaded per pack from the union of these declarations; see
+        // TerrainUniformLayout and Std140Layout.
         schema.alwaysPresent().forEach(entry -> addIfAbsent(members, entry.name(),
-            entry.glslType()));
+            entry.glslType(), 0));
 
         out.append("layout(std140, set = ").append(BindingLayout.SET_UNIFORMS)
             .append(", binding = ").append(BindingLayout.BINDING_UNIFORM_BLOCK)
             .append(") uniform RetinaUniforms {\n");
-        for (Map.Entry<String, String> member : members) {
-            out.append("    ").append(member.getValue()).append(' ')
-                .append(member.getKey()).append(";\n");
+        for (PrologueMember member : members) {
+            out.append("    ").append(member.declaration()).append(";\n");
         }
         out.append("};\n");
 
@@ -1020,14 +1318,21 @@ public final class VulkanTranslator {
         return out.toString();
     }
 
-    private static void addIfAbsent(List<Map.Entry<String, String>> members, String name,
-                                    String type) {
-        for (Map.Entry<String, String> member : members) {
-            if (member.getKey().equals(name)) {
+    /** One member of the generated uniform block, as the prologue will declare it. */
+    private record PrologueMember(String name, String glslType, int arrayLength) {
+        String declaration() {
+            return glslType + " " + name + (arrayLength > 0 ? "[" + arrayLength + "]" : "");
+        }
+    }
+
+    private static void addIfAbsent(List<PrologueMember> members, String name, String type,
+                                    int arrayLength) {
+        for (PrologueMember member : members) {
+            if (member.name().equals(name)) {
                 return;
             }
         }
-        members.add(Map.entry(name, type));
+        members.add(new PrologueMember(name, type, arrayLength));
     }
 
     // ------------------------------------------------------------------

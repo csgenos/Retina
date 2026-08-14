@@ -11,6 +11,7 @@ import com.google.gson.JsonSyntaxException;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -18,26 +19,24 @@ import java.nio.file.StandardCopyOption;
 /**
  * Retina's persisted settings, in {@code config/retina/retina.json}.
  *
+ * <p>Every setting here is one the renderer actually reads. Settings that describe intentions
+ * rather than behaviour — a VRAM budget nothing enforces, an adapter override that cannot apply
+ * because Retina attaches to the device Minecraft already chose — are deliberately absent: a
+ * control that does nothing is worse than a missing one, because it makes a user believe they
+ * have tried something.
+ *
  * <p>Renderer profiles change engine overhead only. None of them alters what a shader pack
  * asked for: a pack's resolution, sample count, effect list and target formats come from the
  * pack's own options and are never reduced behind the user's back. That restriction is what
- * makes the profiles safe to switch between without the user wondering whether their pack
- * still looks right.
+ * makes the profiles safe to switch between without the user wondering whether their pack still
+ * looks right.
  */
-public record RetinaConfig(String selectedPack, RendererProfile profile, boolean debugOverlay,
-                           boolean validationLayers, String adapterOverride,
-                           long vramBudgetMegabytes, boolean parallelCompilation,
-                           int compileThreads, Path file) {
+public record RetinaConfig(String selectedPack, RendererProfile profile, Path file) {
 
     /** JSON shape kept separate so the runtime-only config path is never persisted. */
-    private record PersistedConfig(String selectedPack, RendererProfile profile,
-                                   boolean debugOverlay, boolean validationLayers,
-                                   String adapterOverride, long vramBudgetMegabytes,
-                                   boolean parallelCompilation, int compileThreads) {
+    private record PersistedConfig(String selectedPack, RendererProfile profile) {
         private RetinaConfig bind(Path path) {
-            return new RetinaConfig(selectedPack, profile, debugOverlay, validationLayers,
-                adapterOverride, vramBudgetMegabytes, parallelCompilation, compileThreads,
-                path);
+            return new RetinaConfig(selectedPack, profile, path);
         }
     }
 
@@ -69,8 +68,7 @@ public record RetinaConfig(String selectedPack, RendererProfile profile, boolean
 
     /** The defaults a fresh install starts with. */
     public static RetinaConfig defaults() {
-        return new RetinaConfig(SHADERS_OFF, RendererProfile.BALANCED, false, false, "",
-            0L, true, 0, null);
+        return new RetinaConfig(SHADERS_OFF, RendererProfile.BALANCED, null);
     }
 
     /** Whether a shader pack is selected. */
@@ -78,51 +76,27 @@ public record RetinaConfig(String selectedPack, RendererProfile profile, boolean
         return selectedPack != null && !selectedPack.isEmpty();
     }
 
-    /**
-     * The compile worker count, resolving 0 to a bounded default.
-     *
-     * <p>Bounded below the core count on purpose: shader compilation competes with Sodium's
-     * chunk build threads, and saturating every core makes pack loading faster while making
-     * the world around the player load visibly slower.
-     */
-    public int resolvedCompileThreads() {
-        if (compileThreads > 0) {
-            return Math.min(compileThreads, 32);
-        }
-        return Math.max(1, Math.min(8, Runtime.getRuntime().availableProcessors() / 2));
-    }
-
     /** A copy with a different selected pack. */
     public RetinaConfig withSelectedPack(String pack) {
-        return new RetinaConfig(pack, profile, debugOverlay, validationLayers, adapterOverride,
-            vramBudgetMegabytes, parallelCompilation, compileThreads, file);
+        return new RetinaConfig(pack, profile, file);
     }
 
     /** A copy with a different renderer profile. */
     public RetinaConfig withProfile(RendererProfile next) {
-        return new RetinaConfig(selectedPack, next, debugOverlay, validationLayers,
-            adapterOverride, vramBudgetMegabytes, parallelCompilation, compileThreads, file);
-    }
-
-    /** A copy with the in-game pass timing overlay enabled or disabled. */
-    public RetinaConfig withDebugOverlay(boolean next) {
-        return new RetinaConfig(selectedPack, profile, next, validationLayers,
-            adapterOverride, vramBudgetMegabytes, parallelCompilation, compileThreads, file);
-    }
-
-    /** A copy with asynchronous shader compilation enabled or disabled. */
-    public RetinaConfig withParallelCompilation(boolean next) {
-        return new RetinaConfig(selectedPack, profile, debugOverlay, validationLayers,
-            adapterOverride, vramBudgetMegabytes, next, compileThreads, file);
+        return new RetinaConfig(selectedPack, next, file);
     }
 
     /** A copy bound to {@code path} for saving. */
     public RetinaConfig withFile(Path path) {
-        return new RetinaConfig(selectedPack, profile, debugOverlay, validationLayers,
-            adapterOverride, vramBudgetMegabytes, parallelCompilation, compileThreads, path);
+        return new RetinaConfig(selectedPack, profile, path);
     }
 
-    /** Reads the config, returning defaults when the file does not exist. */
+    /**
+     * Reads the config, returning defaults when the file does not exist.
+     *
+     * <p>Unknown keys are ignored, so a file written by an older build that carried settings
+     * since removed still loads.
+     */
     public static RetinaConfig load(Path path) throws IOException {
         if (!Files.isRegularFile(path)) {
             return defaults().withFile(path);
@@ -136,26 +110,22 @@ public record RetinaConfig(String selectedPack, RendererProfile profile, boolean
         }
     }
 
-    /** Replaces any out-of-range value with its default. */
+    /** Replaces any missing value with its default. */
     private RetinaConfig sanitised() {
         return new RetinaConfig(
             selectedPack == null ? SHADERS_OFF : selectedPack,
             profile == null ? RendererProfile.BALANCED : profile,
-            debugOverlay,
-            validationLayers,
-            adapterOverride == null ? "" : adapterOverride,
-            Math.max(0L, vramBudgetMegabytes),
-            parallelCompilation,
-            Math.max(0, compileThreads),
             file);
     }
 
     /**
      * Writes the config atomically.
      *
-     * <p>Written to a temporary file and moved into place so that a crash mid-write leaves
-     * the previous config intact rather than a truncated file that fails to parse on the next
-     * launch.
+     * <p>Written to a temporary file and moved into place, so a crash mid-write leaves the
+     * previous config intact rather than a truncated file that fails to parse on the next
+     * launch. The move asks for {@link StandardCopyOption#ATOMIC_MOVE} and falls back to a
+     * plain replace only where the filesystem cannot provide it — without asking, the "atomic"
+     * in this contract is a claim rather than a guarantee.
      */
     public void save() throws IOException {
         if (file == null) {
@@ -163,10 +133,13 @@ public record RetinaConfig(String selectedPack, RendererProfile profile, boolean
         }
         Files.createDirectories(file.getParent());
         Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
-        PersistedConfig persisted = new PersistedConfig(selectedPack, profile, debugOverlay,
-            validationLayers, adapterOverride, vramBudgetMegabytes, parallelCompilation,
-            compileThreads);
+        PersistedConfig persisted = new PersistedConfig(selectedPack, profile);
         Files.writeString(temporary, GSON.toJson(persisted), StandardCharsets.UTF_8);
-        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+        try {
+            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 }
