@@ -134,15 +134,15 @@ before claiming visual parity.
 Numbered `deferred.vsh/fsh`, `deferred1`, and so on are now live fullscreen stages. They use
 the same validated colortex sampler, target-scale, flip, mipmap, and ping-pong machinery as
 composite programs, but execute first at the end of the assembled LevelRenderer world scene.
-They are intentionally not described as a full Iris deferred-ordering implementation: `prepare`,
-`setup`, `shadowcomp`, and per-feature ordering controls remain separate work.
+They are intentionally not described as a full Iris deferred-ordering implementation: `setup`
+and per-feature ordering controls remain separate work.
 
 Numbered `prepare.vsh/fsh`, `prepare1`, and so on share the same target and sampler contract.
-They execute once after Retina has a valid Sodium camera/fog uniform slice and immediately before
-the first terrain invocation. This is a deliberate early-world compatibility boundary, not a
-claim that prepare runs before every vanilla sky/cloud/world feature. The supplied reference
-  pass is neutral and compiler-tested; its next live activation should be recorded before claiming
-  GPU validation.
+They execute once at the render-pass-safe post-world boundary after Retina has a valid
+Sodium camera/fog uniform slice, before the built-in deferred/composite/final chain. Opening a
+second render pass during Sodium terrain submission is invalid on the Vulkan encoder, so do not
+move this work back into terrain uniform preparation without a dedicated frame-graph hook. This
+is a safety boundary, not a claim of full Iris prepare ordering.
 
 Numbered `shadowcomp.vsh/fsh`, `shadowcomp1`, and so on are live as post-shadow colortex stages.
 They require an active `shadow.vsh/fsh` pass, execute once after terrain and compatible entity
@@ -159,11 +159,10 @@ different size or format retain the prior terrain-only route and log one explici
 warning rather than binding a mismatched Vulkan attachment.
 
 It intentionally rejects custom terrain resources, non-standard entity and block-entity shader
-programs, non-standard entity shadow casters, shadow comp, non-color/non-shadow post resources, and
-deferred/prepare/setup passes. The backend-neutral core models more of that contract, but those
-dedicated programs are not yet connected to live Minecraft render stages. Add new stages
-transactionally and keep unsupported features as explicit diagnostics rather than silently
-changing pack semantics.
+programs, non-standard entity shadow casters, native shadowcolor attachment outputs,
+non-color/non-shadow post resources, and `setup`. Deferred, prepare, and shadowcomp are live,
+but only with the documented render-pass-safe ordering. Add new stages transactionally and keep
+unsupported features as explicit diagnostics rather than silently changing pack semantics.
 
 ## Next roadmap
 
@@ -222,10 +221,10 @@ claiming draw-time quality proof.
 
 The second Gate 4 slice adds `prepare` through `prepare99` under the same transactional compile,
 allocation, and flip rules. `ShaderRuntime` resets an explicit per-frame guard at world-frame
-start and executes the chain only on the first non-shadow terrain uniform preparation. This
-prevents duplicate execution across Sodium terrain layers and prevents prepare from mutating
-targets during shadow replay. The Fabric suite validates the reference program; do not yet mark
-this slice as live-activated until the current client is restarted.
+start and executes the chain at the post-world render-pass-safe boundary. A first in-world test
+proved that recording it from Sodium's open terrain pass is invalid Vulkan usage; the safe
+ordering is now enforced. The Fabric suite validates the reference program; capture a visual
+probe before claiming its output quality.
 
 The third Gate 4 slice adds `shadowcomp` through `shadowcomp99`. The compiler refuses the stage
 without an active shadow program, validates it transactionally, and includes its sampler/target
