@@ -70,6 +70,10 @@ Validated on 2026-08-13 with Minecraft 26.2, Fabric Loader 0.19.3, Fabric API
     activated on the AMD Vulkan backend with `1 deferred` and zero diagnostics. This proves the
     pass was translated and precompiled alongside the terrain, entity, particle, shadow, and
     final pipelines; an in-world deferred draw probe remains pending.
+17. The first shadowcomp chain compiled through the Fabric suite and activated on the AMD Vulkan
+    backend with `1 prepare`, `1 shadowcomp`, and `1 deferred`, all at zero diagnostics. The
+    client was closed immediately after activation. This proves transactional translation and
+    precompilation, not an in-world shadowcomp visual probe.
 
 ## Bugs found by the world tests
 
