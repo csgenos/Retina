@@ -26,7 +26,13 @@ import java.util.EnumSet;
  * without copying Sodium's private GUI implementation.
  */
 public final class SodiumConfigIntegration implements ConfigEntryPoint {
-    private static final Identifier ICON = Identifier.fromNamespaceAndPath("retina", "icon");
+    // Sodium resolves this through Minecraft.getTextureManager().getTexture(Identifier), which
+    // looks up the literal path with no "textures/" prefix or ".png" suffix added -- confirmed
+    // against Sodium's own icon (Identifier.fromNamespaceAndPath("sodium",
+    // "textures/gui/config-icon.png")). The bare "icon" this used before pointed at a resource
+    // that doesn't exist, so this page has never actually shown an icon.
+    private static final Identifier ICON =
+        Identifier.fromNamespaceAndPath("retina", "textures/gui/icon.png");
     private static final Identifier PROFILE = Identifier.fromNamespaceAndPath("retina", "profile");
 
     @Override
