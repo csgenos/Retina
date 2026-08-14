@@ -1,3 +1,5 @@
+import java.util.jar.JarFile
+
 // The Fabric module. Building it requires maven.fabricmc.net, libraries.minecraft.net and
 // piston-meta.mojang.com. Environments without access to those hosts should build with
 // -Pretina.coreOnly=true, which excludes this module; see docs/BUILDING.md.
@@ -108,6 +110,36 @@ tasks.processResources {
 tasks.jar {
     from(rootProject.file("LICENSE")) { rename { "LICENSE_retina" } }
     from(rootProject.file("NOTICE")) { rename { "NOTICE_retina" } }
+}
+
+// A publishable Fabric artifact must retain its metadata, icon, license notice, and bundled core.
+// Keep this verification local so release uploads remain a deliberate human action.
+val verifyReleaseJar by tasks.registering {
+    group = "verification"
+    description = "Verifies that the Fabric release jar contains its required publishing assets."
+    dependsOn(tasks.jar)
+    doLast {
+        val archive = tasks.jar.get().archiveFile.get().asFile
+        val required = setOf(
+            "fabric.mod.json",
+            "assets/retina/icon.png",
+            "LICENSE_retina",
+            "NOTICE_retina",
+            "META-INF/jars/retina-core-"
+        )
+        JarFile(archive).use { jar ->
+            val entries = jar.entries().asSequence().map { it.name }.toSet()
+            required.forEach { path ->
+                check(entries.any { it == path || it.startsWith(path) }) {
+                    "Release jar ${archive.name} is missing $path"
+                }
+            }
+        }
+    }
+}
+
+tasks.check {
+    dependsOn(verifyReleaseJar)
 }
 
 // Reproducible archives: without these, the jar embeds file timestamps and filesystem

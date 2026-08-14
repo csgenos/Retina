@@ -254,6 +254,12 @@ was then closed. A visible in-world probe and native shadowcolor outputs remain 
 
 ## Invariants to preserve
 
+- `:retina-fabric:build` is the publishable Fabric release build. Its `verifyReleaseJar` task
+  verifies `fabric.mod.json`, the in-jar icon, LGPL notice, and bundled `retina-core` jar before
+  a release artifact is considered valid. Upload the main jar only; never upload `-sources.jar`.
+  `docs/PUBLISHING.md` is the current Modrinth/CurseForge checklist and `CHANGELOG.md` supplies
+  the initial prerelease body. Keep public version labels at Alpha/Beta until a third-party pack
+  and broader hardware compatibility matrix exist.
 - Do not replace Blaze3D's Vulkan device with a private Retina device.
 - Do not mutate the terrain vertex format only while a pack is active; that would make cached
   chunk meshes incompatible across toggles.
