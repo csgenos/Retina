@@ -136,12 +136,15 @@ public final class ShaderOptionScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
                                    float partialTick) {
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
-        graphics.centeredText(font, title, width / 2, 12, 0xFFFFFF);
+        // See ShaderPackScreen.extractRenderState: GuiGraphicsExtractor.text/centeredText
+        // silently drops any draw whose color has alpha 0, which every bare 6-digit literal
+        // does.
+        graphics.centeredText(font, title, width / 2, 12, 0xFFFFFFFF);
         if (!details.diagnostics().isEmpty()) {
             graphics.centeredText(font,
                 Component.translatable("retina.warning.unknownDirective",
                     details.diagnostics().size()),
-                width / 2, height - 68, 0xFFAA00);
+                width / 2, height - 68, 0xFFFFAA00);
         }
     }
 
