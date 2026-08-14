@@ -1128,6 +1128,11 @@ public final class ShaderRuntime {
         if (shadowRendering || active == null || active.shadowFramebuffer() == null) {
             return;
         }
+        // The shared per-frame values are recorded regardless of which pass kind supplied
+        // them, so a frame where translucent is the only terrain Sodium actually drew still
+        // leaves entity-shadow replay and the shadowcomp chain (below, in renderShadowPass)
+        // with a camera/fog/sampler to work from -- only the terrain-pass entry itself is
+        // conditionally withheld.
         if (terrainInvocation == null) {
             terrainInvocation = new TerrainInvocation();
         }
@@ -1135,16 +1140,40 @@ public final class ShaderRuntime {
         terrainInvocation.camera = camera;
         terrainInvocation.fog = fog;
         terrainInvocation.sampler = sampler;
+        if (pass.isTranslucent()) {
+            // Sodium's own TerrainRenderPass.getTarget() resolves a translucent pass to
+            // Minecraft's translucentTarget(), a target scoped to vanilla's own translucent
+            // draw within the normal frame. Retina's shadow replay runs later, in the same
+            // frame but outside that window, where translucentTarget() is null -- and
+            // DefaultChunkRenderer.render() dereferences getTarget() as a plain argument
+            // expression before Retina's render-pass redirect mixin ever runs, so there is no
+            // way to redirect this pass to the shadow framebuffer at all. Shadow maps
+            // conventionally skip translucent/water depth regardless, so the correct fix is
+            // simply not to queue it for replay.
+            return;
+        }
         terrainInvocation.passes.put(passKind(pass), pass);
     }
 
     /** Replays Sodium's visible terrain lists through the active shadow shader and depth map. */
     public void renderShadowPass() {
         ActivePack current = active;
+        if (current == null || current.shadowFramebuffer() == null) {
+            return;
+        }
+        // A frame with no terrain invocation to replay -- nothing visible yet, or every
+        // visible pass was translucent-only -- still needs entity-shadow replay and the
+        // shadowcomp chain to run below; neither of those two reads terrain-invocation state,
+        // so only the terrain replay itself is conditional on it.
+        renderTerrainShadows(current);
+        replayEntityShadows(current);
+        renderShadowCompChain(current);
+    }
+
+    private void renderTerrainShadows(ActivePack current) {
         TerrainInvocation invocation = terrainInvocation;
-        if (current == null || current.shadowFramebuffer() == null || invocation == null
-            || invocation.camera == null || invocation.fog == null || invocation.sampler == null
-            || invocation.passes.isEmpty()) {
+        if (invocation == null || invocation.camera == null || invocation.fog == null
+            || invocation.sampler == null || invocation.passes.isEmpty()) {
             return;
         }
         if (shadowView == null) {
@@ -1176,8 +1205,6 @@ public final class ShaderRuntime {
         } finally {
             shadowRendering = false;
         }
-        replayEntityShadows(current);
-        renderShadowCompChain(current);
     }
 
     private void replayEntityShadows(ActivePack current) {
