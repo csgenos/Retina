@@ -66,6 +66,10 @@ public abstract class DefaultChunkRendererMixin {
         GpuBufferSlice retina = ShaderRuntime.get().prepareUniforms(matrices, camera, fog);
         if (retina != null) {
             pass.setUniform("RetinaUniforms", retina);
+            // Terrain's pipeline layout (built in ShaderRuntime.buildPipeline) always includes
+            // RETINA_PBR_SAMPLERS, so this is safe unconditionally -- unlike the generic scene
+            // path in RenderPassMixin, there is no non-Retina pipeline this could be bound onto.
+            ShaderRuntime.get().bindPbrDefaults(pass);
         }
         ShaderRuntime.get().captureTerrainInvocation(matrices, camera, fog, sampler, terrainPass);
     }

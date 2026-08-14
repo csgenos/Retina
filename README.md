@@ -81,6 +81,10 @@ lighting; it proves renderer stages rather than visual polish.
 - Weather shaders: optional `gbuffers_weather.vsh/fsh` runs for Minecraft's weather depth-write
   and no-depth-write quad pipelines, preserving their translucent blend/depth behavior and the
   particle-format transform, fog, texture, and lightmap ABI.
+- PBR samplers: `normals` and `specular` are real bound samplers on every terrain, entity,
+  particle, weather, shadow, and applicable post-processing pipeline, so a pack that declares
+  them compiles and renders instead of failing to load. See Known boundaries for what they are
+  bound to.
 - Standard entity-format shadow casters: Retina records the original indexed buffers, dynamic
   transform UBO, and atlas binding, then replays compatible `pipeline/entity_*` draws into the
   terrain shadow map with alpha testing. This also covers a block entity when its renderer uses
@@ -104,14 +108,20 @@ lighting; it proves renderer stages rather than visual polish.
   program. Water-surface compositing, caustics, refraction, and pack-controlled underwater
   colour/fog behavior remain future work.
 - `setup`, compute/SSBO, geometry/tessellation, custom pack
-  textures/images, resource-pack texture access, dimensions, Distant Horizons, and most of the
-  Iris `shaders.properties` expression ecosystem are not live yet.
+  textures/images, dimensions, Distant Horizons, and most of the Iris `shaders.properties`
+  expression ecosystem are not live yet.
 - Packs requiring a non-full-resolution/non-RGBA8 `colortex0` use a safe terrain-only fallback
   rather than bind an incompatible main scene target.
 - Pack-declared vertex attributes such as `mc_Entity`, `mc_midTexCoord`, `at_tangent`, and
   `at_midBlock` are accepted, given locations, and compile, but none of the vertex formats
   Retina draws through supplies them yet, so they read zero. An effect keyed on one of them
   behaves as though every block were untagged; sourcing the real data is separate work.
+- `normals` and `specular` are real, always-bound samplers on every gbuffer, shadow, and
+  applicable post-processing pipeline, so packs that declare them compile and render rather than
+  failing to load. They are bound to a flat "no data" default (a neutral tangent-space normal;
+  zero smoothness/metalness/porosity/emission) rather than a resource pack's own `_n`/`_s`
+  textures, which are not sourced yet. A pack renders as though every block were untagged for
+  PBR, the same safe fallback OptiFine and Iris use for a block with no `_n`/`_s` texture.
 - A debug overlay and a parallel shader-compilation pool are both wanted and neither exists.
   Sodium's **Renderer** page therefore lists only the profile selector.
 
@@ -122,7 +132,9 @@ lighting; it proves renderer stages rather than visual polish.
 2. Expand dedicated render-stage programs for weather, clouds, sky, and effects, then add
    their ordering and cross-stage contracts around the completed particle baseline.
 3. Implement setup and native shadowcolor processing, then broaden colortex behavior.
-4. Add custom textures/images/samplers and resource-pack texture integration.
+4. Source real per-block `_n`/`_s` textures from the active resource pack into the `normals`/
+   `specular` samplers, matching the vanilla block atlas's own sprite layout, then add custom
+   pack-declared textures and images.
 5. Reach Iris-comparable breadth: expand the useful legacy shader-pack surface where it suits
    Retina, then add uniforms, expressions, material/entity maps, dimensions, mod support,
    advanced GPU stages, and Distant Horizons through Retina's own contracts.
