@@ -300,6 +300,14 @@ public final class ShaderRuntime {
                 precompile("entity shadow", entityShadowPipeline, source);
                 sources.put(entityShadowPipeline, source);
             }
+            for (PreparedTerrainPack.PostProgram deferred : prepared.deferredPrograms()) {
+                RenderPipeline pipeline = buildPostPipeline(prepared, deferred, false,
+                    mainTarget.getColorTexture().getFormat());
+                ShaderSource source = shaderSource(pipeline, deferred);
+                precompile(deferred.sourceName(), pipeline, source);
+                postPipelines.put(deferred, pipeline);
+                sources.put(pipeline, source);
+            }
             for (PreparedTerrainPack.PostProgram post : prepared.compositePrograms()) {
                 RenderPipeline pipeline = buildPostPipeline(prepared, post, false,
                     mainTarget.getColorTexture().getFormat());
@@ -360,10 +368,10 @@ public final class ShaderRuntime {
                 ? "Vulkan terrain MRT + composite/final active"
                 : "Vulkan terrain pipelines active";
             status = new Status(State.ACTIVE, prepared.name(), detail);
-            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, particles={}, shadow={}, {} post pipelines, {} targets,"
+            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, particles={}, shadow={}, {} deferred, {} composite/final pipelines, {} targets,"
                     + " {} diagnostics)", prepared.name(), pipelines.size(),
                 entityPipeline != null, opaqueParticlePipeline != null, shadowPipeline != null,
-                postPipelines.size(), prepared.targets().size(),
+                prepared.deferredPrograms().size(), postPipelines.size(), prepared.targets().size(),
                 prepared.diagnostics().size());
         } catch (RuntimeException e) {
             fail(requestedGeneration, prepared.name(), usefulMessage(e), e);
@@ -1004,7 +1012,7 @@ public final class ShaderRuntime {
         return shadowRendering;
     }
 
-    /** Executes numbered composite programs and final into Minecraft's main color target. */
+    /** Executes deferred, composite, and final programs after the assembled world scene. */
     public void renderPostChain() {
         restoreMainColorTarget();
         ActivePack current = active;
@@ -1014,12 +1022,18 @@ public final class ShaderRuntime {
         }
         if (!loggedPostChain) {
             loggedPostChain = true;
-            LOGGER.info("Recording first post chain ({} composite, final={})",
+            LOGGER.info("Recording first post chain ({} deferred, {} composite, final={})",
+                current.prepared().deferredPrograms().size(),
                 current.prepared().compositePrograms().size(),
                 current.prepared().finalProgram() != null);
         }
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         try {
+            for (PreparedTerrainPack.PostProgram program
+                : current.prepared().deferredPrograms()) {
+                executePost(current, encoder, program, uniforms, false);
+                current.framebuffer().finishPost(program);
+            }
             for (PreparedTerrainPack.PostProgram program
                 : current.prepared().compositePrograms()) {
                 executePost(current, encoder, program, uniforms, false);

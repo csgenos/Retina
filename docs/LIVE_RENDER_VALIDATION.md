@@ -66,6 +66,10 @@ Validated on 2026-08-13 with Minecraft 26.2, Fabric Loader 0.19.3, Fabric API
     the optional program was translated and both opaque/translucent pipelines precompiled. No
     in-world particle draw has been recorded yet, so this is activation evidence rather than a
     visual-quality claim.
+16. Gate 4's initial deferred chain compiled through the Fabric suite and the reference pack
+    activated on the AMD Vulkan backend with `1 deferred` and zero diagnostics. This proves the
+    pass was translated and precompiled alongside the terrain, entity, particle, shadow, and
+    final pipelines; an in-world deferred draw probe remains pending.
 
 ## Bugs found by the world tests
 
