@@ -123,6 +123,23 @@ final class TerrainPackCompilerTest {
                 texCoord = gl_MultiTexCoord0.xy;
             }
             """);
+        Files.writeString(shaders.resolve("prepare.vsh"), """
+            #version 120
+            varying vec2 texCoord;
+            void main() {
+                gl_Position = ftransform();
+                texCoord = gl_MultiTexCoord0.xy;
+            }
+            """);
+        Files.writeString(shaders.resolve("prepare.fsh"), """
+            #version 120
+            /* RENDERTARGETS: 0 */
+            uniform sampler2D colortex0;
+            varying vec2 texCoord;
+            void main() {
+                gl_FragColor = texture2D(colortex0, texCoord);
+            }
+            """);
         Files.writeString(shaders.resolve("deferred.fsh"), """
             #version 120
             /* RENDERTARGETS: 0 */
@@ -230,6 +247,8 @@ final class TerrainPackCompilerTest {
         assertTrue(result.usesOffscreenTargets());
         assertEquals(java.util.List.of(0, 1),
             result.programs().get(PreparedTerrainPack.PassKind.SOLID).drawTargets());
+        assertEquals(1, result.preparePrograms().size());
+        assertEquals("prepare", result.preparePrograms().getFirst().sourceName());
         assertEquals(1, result.deferredPrograms().size());
         assertEquals("deferred", result.deferredPrograms().getFirst().sourceName());
         assertEquals(1, result.compositePrograms().size());

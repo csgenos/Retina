@@ -167,6 +167,7 @@ public final class ShaderRuntime {
     private ShadowView shadowView;
     private MainColorRedirect mainColorRedirect;
     private boolean shadowRendering;
+    private boolean prepareRendered;
     private boolean loggedTerrainMrt;
     private boolean loggedPostChain;
     private boolean loggedShadowPass;
@@ -300,6 +301,14 @@ public final class ShaderRuntime {
                 precompile("entity shadow", entityShadowPipeline, source);
                 sources.put(entityShadowPipeline, source);
             }
+            for (PreparedTerrainPack.PostProgram prepare : prepared.preparePrograms()) {
+                RenderPipeline pipeline = buildPostPipeline(prepared, prepare, false,
+                    mainTarget.getColorTexture().getFormat());
+                ShaderSource source = shaderSource(pipeline, prepare);
+                precompile(prepare.sourceName(), pipeline, source);
+                postPipelines.put(prepare, pipeline);
+                sources.put(pipeline, source);
+            }
             for (PreparedTerrainPack.PostProgram deferred : prepared.deferredPrograms()) {
                 RenderPipeline pipeline = buildPostPipeline(prepared, deferred, false,
                     mainTarget.getColorTexture().getFormat());
@@ -355,6 +364,7 @@ public final class ShaderRuntime {
             shadowView = null;
             mainColorRedirect = null;
             shadowRendering = false;
+            prepareRendered = false;
             loggedTerrainMrt = false;
             loggedPostChain = false;
             loggedShadowPass = false;
@@ -368,10 +378,11 @@ public final class ShaderRuntime {
                 ? "Vulkan terrain MRT + composite/final active"
                 : "Vulkan terrain pipelines active";
             status = new Status(State.ACTIVE, prepared.name(), detail);
-            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, particles={}, shadow={}, {} deferred, {} composite/final pipelines, {} targets,"
+            LOGGER.info("Activated shader pack {} ({} terrain, entity={}, particles={}, shadow={}, {} prepare, {} deferred, {} composite/final pipelines, {} targets,"
                     + " {} diagnostics)", prepared.name(), pipelines.size(),
                 entityPipeline != null, opaqueParticlePipeline != null, shadowPipeline != null,
-                prepared.deferredPrograms().size(), postPipelines.size(), prepared.targets().size(),
+                prepared.preparePrograms().size(), prepared.deferredPrograms().size(),
+                postPipelines.size(), prepared.targets().size(),
                 prepared.diagnostics().size());
         } catch (RuntimeException e) {
             fail(requestedGeneration, prepared.name(), usefulMessage(e), e);
@@ -825,6 +836,7 @@ public final class ShaderRuntime {
         shadowUniforms = null;
         terrainInvocation = null;
         shadowView = null;
+        prepareRendered = false;
     }
 
     /**
@@ -1055,6 +1067,29 @@ public final class ShaderRuntime {
         }
     }
 
+    /** Executes prepare stages once, immediately before Sodium's first terrain invocation. */
+    private void renderPrepareChain(ActivePack current, GpuBufferSlice uniforms) {
+        if (prepareRendered || current.prepared().preparePrograms().isEmpty()
+            || current.framebuffer() == null) {
+            return;
+        }
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        try {
+            for (PreparedTerrainPack.PostProgram program : current.prepared().preparePrograms()) {
+                executePost(current, encoder, program, uniforms, false);
+                current.framebuffer().finishPost(program);
+            }
+            prepareRendered = true;
+        } catch (RuntimeException e) {
+            long failedGeneration = generation.incrementAndGet();
+            status = new Status(State.FAILED, current.prepared().name(),
+                "prepare chain failed: " + usefulMessage(e));
+            LOGGER.error("Prepare chain for {} failed and was deactivated",
+                current.prepared().name(), e);
+            deactivate(failedGeneration);
+        }
+    }
+
     private static void executePost(ActivePack current, CommandEncoder encoder,
                                     PreparedTerrainPack.PostProgram program,
                                     GpuBufferSlice uniforms, boolean finalPass) {
@@ -1209,6 +1244,7 @@ public final class ShaderRuntime {
         currentModelView.set(matrices.modelView());
         currentProjection.set(matrices.projection());
         frameUniforms = current.uniformStorage().writeUniform(uniform);
+        renderPrepareChain(current, frameUniforms);
         return frameUniforms;
     }
 

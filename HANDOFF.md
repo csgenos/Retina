@@ -126,6 +126,13 @@ composite programs, but execute first at the end of the assembled LevelRenderer 
 They are intentionally not described as a full Iris deferred-ordering implementation: `prepare`,
 `setup`, `shadowcomp`, and per-feature ordering controls remain separate work.
 
+Numbered `prepare.vsh/fsh`, `prepare1`, and so on share the same target and sampler contract.
+They execute once after Retina has a valid Sodium camera/fog uniform slice and immediately before
+the first terrain invocation. This is a deliberate early-world compatibility boundary, not a
+claim that prepare runs before every vanilla sky/cloud/world feature. The supplied reference
+pass is neutral and compiler-tested; its next live activation should be recorded before claiming
+GPU validation.
+
 When `colortex0` is a full-resolution `RGBA8_UNORM` target (the default), Retina temporarily
 routes Minecraft's main world target there for the LevelRenderer frame. Sky, clouds, weather,
 particles, entities, and block entities consequently survive through normal/composite/final
@@ -196,12 +203,19 @@ does for composite. The acceptance lighting pack's neutral deferred pass activat
 Vulkan backend as `1 deferred` with zero diagnostics; record an in-world visual probe before
 claiming draw-time quality proof.
 
+The second Gate 4 slice adds `prepare` through `prepare99` under the same transactional compile,
+allocation, and flip rules. `ShaderRuntime` resets an explicit per-frame guard at world-frame
+start and executes the chain only on the first non-shadow terrain uniform preparation. This
+prevents duplicate execution across Sodium terrain layers and prevents prepare from mutating
+targets during shadow replay. The Fabric suite validates the reference program; do not yet mark
+this slice as live-activated until the current client is restarted.
+
 1. **Dedicated block entities and player/hand.** Add separately validated vertex/bind-group
    paths before claiming coverage for non-standard block entities, armor, items, eyes, or the
    player hand. Preserve the current safe exclusion for mod-defined formats.
 2. **Dedicated scene stages.** Validate the particle baseline in-world, then add weather,
    clouds, sky, and effects with declared ordering and a separate compatibility boundary.
-3. **Pipeline breadth.** Validate deferred in-world, then connect `prepare`, `setup`, and
+3. **Pipeline breadth.** Validate deferred and prepare in-world, then connect `setup` and
    `shadowcomp`; expand
    ping-pong, target scaling/resizing, and attachment behavior only with live GPU tests.
 4. **Resources and ecosystem.** Add pack textures/images/samplers, resource-pack texture

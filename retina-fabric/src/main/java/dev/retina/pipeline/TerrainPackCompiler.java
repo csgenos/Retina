@@ -156,6 +156,16 @@ public final class TerrainPackCompiler {
 
         Map<String, RenderTargetDirectives.PassScale> scales =
             targetDirectives.readPassScales(details.properties().raw());
+        List<TranslatedPost> preparePrograms = new ArrayList<>();
+        for (int index = 0; index < 100; index++) {
+            String name = index == 0 ? "prepare" : "prepare" + index;
+            TranslatedPost post = translateOptionalPost(name, false, preprocessor,
+                optionApplier, source, shadersRoot, details, translator, targetDirectives,
+                scales, diagnostics);
+            if (post != null) {
+                preparePrograms.add(post);
+            }
+        }
         List<TranslatedPost> deferredPrograms = new ArrayList<>();
         for (int index = 0; index < 100; index++) {
             String name = index == 0 ? "deferred" : "deferred" + index;
@@ -196,6 +206,10 @@ public final class TerrainPackCompiler {
             allSources.add(translatedShadow.vertex());
             allSources.add(translatedShadow.fragment());
         }
+        preparePrograms.forEach(program -> {
+            allSources.add(program.vertex());
+            allSources.add(program.fragment());
+        });
         deferredPrograms.forEach(program -> {
             allSources.add(program.vertex());
             allSources.add(program.fragment());
@@ -233,6 +247,10 @@ public final class TerrainPackCompiler {
                 : adaptEntity(compiler, translatedEntity, optimisation);
             PreparedTerrainPack.ParticleProgram particleProgram = translatedParticle == null ? null
                 : adaptParticle(compiler, translatedParticle, optimisation);
+            List<PreparedTerrainPack.PostProgram> preparedPreparePrograms = new ArrayList<>();
+            for (TranslatedPost post : preparePrograms) {
+                preparedPreparePrograms.add(adaptPost(compiler, post, uniforms, optimisation));
+            }
             List<PreparedTerrainPack.PostProgram> preparedDeferredPrograms = new ArrayList<>();
             for (TranslatedPost post : deferredPrograms) {
                 preparedDeferredPrograms.add(adaptPost(compiler, post, uniforms, optimisation));
@@ -246,6 +264,10 @@ public final class TerrainPackCompiler {
 
             Set<Integer> referencedTargets = new LinkedHashSet<>();
             programs.values().forEach(p -> referencedTargets.addAll(p.drawTargets()));
+            preparedPreparePrograms.forEach(p -> {
+                referencedTargets.addAll(p.drawTargets());
+                referencedTargets.addAll(colortexIndices(p.samplers()));
+            });
             preparedDeferredPrograms.forEach(p -> {
                 referencedTargets.addAll(p.drawTargets());
                 referencedTargets.addAll(colortexIndices(p.samplers()));
@@ -258,15 +280,16 @@ public final class TerrainPackCompiler {
                 referencedTargets.addAll(colortexIndices(finalProgram.samplers()));
             }
             List<PreparedTerrainPack.PostProgram> targetPrograms = new ArrayList<>(
-                preparedDeferredPrograms);
+                preparedPreparePrograms);
+            targetPrograms.addAll(preparedDeferredPrograms);
             targetPrograms.addAll(compositePrograms);
             Map<Integer, PreparedTerrainPack.TargetPlan> targets = buildTargetPlans(
                 referencedTargets, targetDirectives, details, programs, targetPrograms);
             diagnostics.addAll(targetDirectives.problems());
             return new PreparedTerrainPack(packName, details.contentHash(), programs, entityProgram,
                 particleProgram,
-                shadowProgram, preparedDeferredPrograms, compositePrograms, finalProgram, targets,
-                uniforms, diagnostics);
+                shadowProgram, preparedPreparePrograms, preparedDeferredPrograms, compositePrograms,
+                finalProgram, targets, uniforms, diagnostics);
         }
     }
 
