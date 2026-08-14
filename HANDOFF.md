@@ -260,6 +260,12 @@ was then closed. A visible in-world probe and native shadowcolor outputs remain 
   `docs/PUBLISHING.md` is the current Modrinth/CurseForge checklist and `CHANGELOG.md` supplies
   the initial prerelease body. Keep public version labels at Alpha/Beta until a third-party pack
   and broader hardware compatibility matrix exist.
+- Sodium 0.9.1's public `sodium:config_api_user` entrypoint now registers
+  `SodiumConfigIntegration`. Retina appears as a sibling **Retina** mod section in Sodium's own
+  settings screen: **Shader Packs** hosts Retina's async-aware browser and **Renderer** exposes
+  profile/debug-overlay/parallel-compilation options. Do not copy Sodium's private UI code or
+  mix into its screen merely for styling. Keep `VideoSettingsScreenMixin` as the vanilla-screen
+  fallback, since clients such as Lunar replace the ordinary video-options screen.
 - Do not replace Blaze3D's Vulkan device with a private Retina device.
 - Do not mutate the terrain vertex format only while a pack is active; that would make cached
   chunk meshes incompatible across toggles.

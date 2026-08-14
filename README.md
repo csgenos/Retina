@@ -12,6 +12,15 @@ It intentionally conflicts with Iris, Sulkan, VulkanMod, Canvas, and Embeddium b
 renderer/shader pipeline can own the client. See [PUBLISHING.md](docs/PUBLISHING.md) for the
 release artifact and platform-upload checklist.
 
+### Shader settings UI
+
+With Sodium 0.9.1, Retina registers through Sodium's public configuration API. Open Sodium's
+Video Settings screen and select the **Retina** section in the left navigation; **Shader Packs**
+opens Retina's pack browser, while **Renderer** exposes Retina's profile, debug overlay, and
+parallel-compilation settings. This also works with clients that replace vanilla Video Settings,
+including Lunar's Sodium screen. The ordinary Minecraft Video Settings button remains as a
+fallback when Sodium's screen is not in use.
+
 ## Current status
 
 Retina is an early, working Vulkan-native shader renderer—not yet an Iris-comparable release.
