@@ -133,13 +133,17 @@ public final class ShaderPackScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
                                    float partialTick) {
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
-        graphics.centeredText(font, title, width / 2, 12, 0xFFFFFF);
+        // Colors passed to GuiGraphicsExtractor.text/centeredText are full ARGB: a bare
+        // 6-digit literal has alpha 0, and GuiGraphicsExtractor.text(...) silently drops any
+        // draw whose alpha is 0 rather than rendering it -- every text call on this screen was
+        // invisible until every literal here carried its own 0xFF alpha byte.
+        graphics.centeredText(font, title, width / 2, 12, 0xFFFFFFFF);
         if (!status.isEmpty()) {
-            graphics.centeredText(font, status, width / 2, height - 66, 0xA0A0A0);
+            graphics.centeredText(font, status, width / 2, height - 66, 0xFFA0A0A0);
         } else {
             ShaderRuntime.Status runtime = ShaderRuntime.get().status();
             int color = runtime.state() == ShaderRuntime.State.FAILED
-                || runtime.state() == ShaderRuntime.State.WRONG_BACKEND ? 0xFF5555 : 0xA0A0A0;
+                || runtime.state() == ShaderRuntime.State.WRONG_BACKEND ? 0xFFFF5555 : 0xFFA0A0A0;
             graphics.centeredText(font, runtime.detail(), width / 2, height - 66, color);
         }
     }
@@ -196,12 +200,12 @@ public final class ShaderPackScreen extends Screen {
                     ? Component.translatable("retina.screen.packs.off").getString()
                     : pack.displayName();
                 int colour = pack == null || pack.status() == PackManager.PackEntry.Status.READY
-                    ? 0xFFFFFF
-                    : 0xFF5555;
+                    ? 0xFFFFFFFF
+                    : 0xFFFF5555;
                 graphics.text(font, label, getContentX() + 4, getContentY() + 3, colour);
                 if (pack != null && pack.status() != PackManager.PackEntry.Status.READY) {
                     graphics.text(font, pack.detail(), getContentX() + 4, getContentY() + 13,
-                        0x808080);
+                        0xFF808080);
                 }
             }
 
