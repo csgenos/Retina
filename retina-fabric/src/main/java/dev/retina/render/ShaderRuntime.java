@@ -1211,6 +1211,10 @@ public final class ShaderRuntime {
         }
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         try {
+            // Sodium has completed every terrain render pass by this point. Prepare used to be
+            // recorded from prepareUniforms(), which is called while Sodium's pass is open;
+            // nesting a Blaze3D render pass there corrupts the Vulkan command encoder.
+            renderPrepareChain(current, uniforms, encoder);
             renderUnderwaterComposition(current, encoder);
             for (PreparedTerrainPack.PostProgram program
                 : current.prepared().deferredPrograms()) {
@@ -1260,22 +1264,20 @@ public final class ShaderRuntime {
             pass.bindTexture("SceneDepth", main.getDepthTextureView(), sampler);
             pass.draw(3, 1, 0, 0);
         }
-        framebuffer.finishPost(new PreparedTerrainPack.PostProgram("retina_underwater", "", "",
-            List.of(0), List.of(), Map.of(), new dev.retina.core.target.RenderTargetDirectives.PassScale(1, 0, 0),
-            Map.of(), true));
+        framebuffer.flipTarget(0);
     }
 
     private FogType currentCameraMedium(ActivePack current) {
         return current == active ? cameraMedium : FogType.NONE;
     }
 
-    /** Executes prepare stages once, immediately before Sodium's first terrain invocation. */
-    private void renderPrepareChain(ActivePack current, GpuBufferSlice uniforms) {
+    /** Executes prepare stages once at a render-pass-safe boundary before deferred work. */
+    private void renderPrepareChain(ActivePack current, GpuBufferSlice uniforms,
+                                    CommandEncoder encoder) {
         if (prepareRendered || current.prepared().preparePrograms().isEmpty()
             || current.framebuffer() == null) {
             return;
         }
-        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         try {
             for (PreparedTerrainPack.PostProgram program : current.prepared().preparePrograms()) {
                 executePost(current, encoder, program, uniforms, false);
@@ -1446,7 +1448,6 @@ public final class ShaderRuntime {
         currentModelView.set(matrices.modelView());
         currentProjection.set(matrices.projection());
         frameUniforms = current.uniformStorage().writeUniform(uniform);
-        renderPrepareChain(current, frameUniforms);
         return frameUniforms;
     }
 

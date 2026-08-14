@@ -25,8 +25,8 @@ lighting; it proves renderer stages rather than visual polish.
   resize-safe retirement, and standard RGBA8/RGBA16F live targets.
 - Post processing: numbered `prepare`, `deferred`, and `composite` passes, `final`, internal
   pass-through final, and transactional pack activation (a failed CPU/GPU compile leaves the old
-  pack running). Prepare currently runs once before Sodium's first terrain invocation; deferred
-  runs after Retina's assembled world scene and before composite/final. Neither yet exposes
+  pack running). Prepare, deferred, composite, and final execute at a render-pass-safe boundary
+  after Retina's assembled world scene; deferred precedes composite/final. Neither yet exposes
   Iris's per-stage particle or weather ordering controls.
 - Shadow composition: numbered `shadowcomp` passes run after terrain/entity shadow replay and
   before deferred. They can sample `shadowtex0`, `shadowtex1`, `shadow`, and `shadowcolor*`, then
@@ -74,9 +74,9 @@ lighting; it proves renderer stages rather than visual polish.
 - Entity, block-entity, player/hand, and mod-defined pipelines are not all specialized. Shadow
   casting is intentionally limited to the standard entity quad ABI; armor, eyes, items, player
   hand, custom block entities, and mod-defined formats remain excluded.
-- Underwater medium effects are not implemented yet. Terrain culling still uses Minecraft/Sodium
-  fog distances, but Retina does not yet add Iris-style underwater scene attenuation or water
-  surface compositing.
+- Underwater attenuation is a fixed Retina medium pass, not a replacement for a pack's water
+  program. Water-surface compositing, caustics, refraction, and pack-controlled underwater
+  colour/fog behavior remain future work.
 - `setup`, compute/SSBO, geometry/tessellation, custom pack
   textures/images, resource-pack texture access, dimensions, Distant Horizons, and most of the
   Iris `shaders.properties` expression ecosystem are not live yet.

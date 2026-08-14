@@ -144,9 +144,14 @@ public final class ColortexFramebuffer implements AutoCloseable {
     public void finishPost(PreparedTerrainPack.PostProgram program) {
         for (int index : program.drawTargets()) {
             if (program.flips().getOrDefault(index, true)) {
-                require(index).flip();
+                flipTarget(index);
             }
         }
+    }
+
+    /** Makes the alternate half of one target its current main half. */
+    public void flipTarget(int index) {
+        require(index).flip();
     }
 
     /** Generates the full mip chain for the target's current main half in command order. */
