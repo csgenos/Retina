@@ -120,6 +120,12 @@ native dynamic-transform, projection, fog, particle-texture (`Sampler0`), and li
 the latter preserves vanilla alpha blending. Weather uses a related but different pipeline
 contract and remains safely vanilla until it has its own stage.
 
+Numbered `deferred.vsh/fsh`, `deferred1`, and so on are now live fullscreen stages. They use
+the same validated colortex sampler, target-scale, flip, mipmap, and ping-pong machinery as
+composite programs, but execute first at the end of the assembled LevelRenderer world scene.
+They are intentionally not described as a full Iris deferred-ordering implementation: `prepare`,
+`setup`, `shadowcomp`, and per-feature ordering controls remain separate work.
+
 When `colortex0` is a full-resolution `RGBA8_UNORM` target (the default), Retina temporarily
 routes Minecraft's main world target there for the LevelRenderer frame. Sky, clouds, weather,
 particles, entities, and block entities consequently survive through normal/composite/final
@@ -182,12 +188,21 @@ activation evidence only; keep the next live test focused on visible opaque and 
 particle probes before claiming in-world visual validation. `syncAcceptancePacks` is now an
 explicit dependency of `runClient`, so the one-command development run cannot race its pack copy.
 
+Gate 4 has started with the deferred baseline. The compiler resolves `deferred` through
+`deferred99`, validates every supplied pair transactionally, and carries their samplers/target
+references into allocation planning. The runtime precompiles those pipelines during activation
+and executes them before composite/final, flipping each written colortex target exactly as it
+does for composite. The acceptance lighting pack's neutral deferred pass activated on the AMD
+Vulkan backend as `1 deferred` with zero diagnostics; record an in-world visual probe before
+claiming draw-time quality proof.
+
 1. **Dedicated block entities and player/hand.** Add separately validated vertex/bind-group
    paths before claiming coverage for non-standard block entities, armor, items, eyes, or the
    player hand. Preserve the current safe exclusion for mod-defined formats.
 2. **Dedicated scene stages.** Validate the particle baseline in-world, then add weather,
    clouds, sky, and effects with declared ordering and a separate compatibility boundary.
-3. **Pipeline breadth.** Connect `prepare`, `deferred`, `setup`, and `shadowcomp`; expand
+3. **Pipeline breadth.** Validate deferred in-world, then connect `prepare`, `setup`, and
+   `shadowcomp`; expand
    ping-pong, target scaling/resizing, and attachment behavior only with live GPU tests.
 4. **Resources and ecosystem.** Add pack textures/images/samplers, resource-pack texture
    access, Retina's own broad uniform/expression/material/entity contracts, dimensions, mod

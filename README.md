@@ -23,8 +23,10 @@ lighting; it proves renderer stages rather than visual polish.
 - Render targets: up to eight simultaneous outputs selected from `colortex0..15`, double
   buffering, clear/color/format directives, mipmaps, flips, custom target size, pass scale,
   resize-safe retirement, and standard RGBA8/RGBA16F live targets.
-- Post processing: numbered `composite` passes, `final`, internal pass-through final, and
-  transactional pack activation (a failed CPU/GPU compile leaves the old pack running).
+- Post processing: numbered `deferred` and `composite` passes, `final`, internal pass-through
+  final, and transactional pack activation (a failed CPU/GPU compile leaves the old pack running).
+  Deferred runs after Retina's assembled world scene and before composite/final; its current
+  ordering intentionally does not yet expose Iris's per-stage particle or weather controls.
 - Terrain shadows: `shadow.vsh/fsh`, 128–4096 power-of-two maps, `shadowDistance`, D32 depth,
   two `shadowcolor` outputs, raw `shadowtex1`, and comparison `shadowtex0`/`shadow` sampling.
   Visible Sodium terrain is replayed from a light-space camera into the map.
@@ -64,7 +66,7 @@ lighting; it proves renderer stages rather than visual polish.
 - Underwater medium effects are not implemented yet. Terrain culling still uses Minecraft/Sodium
   fog distances, but Retina does not yet add Iris-style underwater scene attenuation or water
   surface compositing.
-- Deferred, `prepare`, `setup`, `shadowcomp`, compute/SSBO, geometry/tessellation, custom pack
+- `prepare`, `setup`, `shadowcomp`, compute/SSBO, geometry/tessellation, custom pack
   textures/images, resource-pack texture access, dimensions, Distant Horizons, and most of the
   Iris `shaders.properties` expression ecosystem are not live yet.
 - Packs requiring a non-full-resolution/non-RGBA8 `colortex0` use a safe terrain-only fallback
@@ -76,7 +78,7 @@ lighting; it proves renderer stages rather than visual polish.
    the standard entity quad ABI.
 2. Expand dedicated render-stage programs for weather, clouds, sky, and effects, then add
    their ordering and cross-stage contracts around the completed particle baseline.
-3. Implement deferred/prepare/setup/shadowcomp stages and broaden colortex behavior.
+3. Implement prepare/setup/shadowcomp stages and broaden colortex behavior.
 4. Add custom textures/images/samplers and resource-pack texture integration.
 5. Reach Iris-comparable breadth: expand the useful legacy shader-pack surface where it suits
    Retina, then add uniforms, expressions, material/entity maps, dimensions, mod support,
