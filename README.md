@@ -47,10 +47,13 @@ lighting; it proves renderer stages rather than visual polish.
   therefore survive final/composite processing; the player hand remains vanilla after final.
 - Basic entity shaders: `gbuffers_entities.vsh/fsh` runs for the normal Minecraft
   `pipeline/entity_*` quad family, with the vanilla transform, fog, lighting, `Sampler0`, and
-  `Sampler2` ABI. Unsupported entity pipeline families fall back safely to vanilla.
+  `Sampler2` ABI. Legacy single-range fog is clamped to the nearer of Minecraft's environmental
+  and render-distance ranges, so distant entities do not escape the terrain fade. Unsupported
+  entity pipeline families fall back safely to vanilla.
 - Particle shaders: optional `gbuffers_particles.vsh/fsh` runs for Minecraft's
   `pipeline/opaque_particle` and `pipeline/translucent_particle` quad stages. It keeps
-  vanilla's opaque-versus-alpha-blended split and supplies the matching transform, fog,
+  vanilla's opaque-versus-alpha-blended split and supplies the matching transform, combined
+  environment/render-distance fog,
   particle texture, and lightmap ABI. Weather is deliberately not routed through this stage.
 - Weather shaders: optional `gbuffers_weather.vsh/fsh` runs for Minecraft's weather depth-write
   and no-depth-write quad pipelines, preserving their translucent blend/depth behavior and the
