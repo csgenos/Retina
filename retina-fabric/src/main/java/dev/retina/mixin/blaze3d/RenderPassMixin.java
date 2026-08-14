@@ -82,10 +82,24 @@ public abstract class RenderPassMixin {
             firstIndex, vertexOffset, firstInstance);
     }
 
+    // Separate from retina$captureEntityDraw above: that one only records vanilla entity draws
+    // for shadow replay, but the normals/specular fallback belongs on every substituted scene
+    // pipeline (entities, particles, weather), not just the entity-shadow-casting subset.
+    @Inject(method = "drawIndexed", at = @At("HEAD"))
+    private void retina$bindScenePbrDefaults(int indexCount, int instanceCount, int firstIndex,
+                                             int vertexOffset, int firstInstance, CallbackInfo ci) {
+        if (!ShaderRuntime.isCapturingDrawState()) {
+            return;
+        }
+        ShaderRuntime.get().bindScenePbrDefaults((RenderPass)(Object)this);
+    }
+
     @ModifyArg(method = "setPipeline", index = 0, at = @At(value = "INVOKE",
         target = "Lcom/mojang/blaze3d/systems/RenderPassBackend;setPipeline("
             + "Lcom/mojang/blaze3d/pipeline/RenderPipeline;)V"))
     private RenderPipeline retina$replaceEntityPipeline(RenderPipeline original) {
-        return ShaderRuntime.get().scenePipelineFor(original);
+        RenderPipeline substituted = ShaderRuntime.get().scenePipelineFor(original);
+        ShaderRuntime.get().trackScenePbrPass((RenderPass)(Object)this, substituted != original);
+        return substituted;
     }
 }

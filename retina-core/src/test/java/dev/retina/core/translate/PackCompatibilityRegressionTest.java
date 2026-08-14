@@ -226,6 +226,42 @@ class PackCompatibilityRegressionTest {
     }
 
     @Test
+    @DisplayName("normals and specular compile as fixed-slot scene samplers, not pack-custom ones")
+    void pbrSamplersAreFixedSceneSamplers() {
+        // retina-fabric gives every gbuffer/shadow RenderPipeline a bind group named exactly
+        // "normals"/"specular" (ShaderRuntime.RETINA_PBR_SAMPLERS), unconditionally rather than
+        // per-pack. That only works if BindingLayout always recognises these two names as scene
+        // samplers -- if a pack's declaration were ever treated as a pack-custom sampler instead,
+        // it would land in SET_CUSTOM and the fabric-side bind group would not exist for it.
+        String fragment = """
+            #version 120
+            uniform sampler2D normals;
+            uniform sampler2D specular;
+            varying vec2 texcoord;
+            void main() {
+                gl_FragColor = texture2D(normals, texcoord) + texture2D(specular, texcoord);
+            }
+            """;
+        BindingLayout layout = new BindingLayout();
+        TranslatedSource translated = new VulkanTranslator(layout, UniformSchema.standard())
+            .translate(fragment, new VulkanTranslator.Options(ShaderStage.FRAGMENT,
+                DrawBuffersDirective.defaultTargets(), AlphaTest.ALWAYS, false, 450,
+                VaryingLayout.build(VulkanTranslator.collectVaryings(fragment,
+                    ShaderStage.FRAGMENT)).layout()));
+        compile(translated, ShaderStage.FRAGMENT);
+
+        for (String name : List.of("normals", "specular")) {
+            BindingLayout.Binding binding = layout.sceneSampler(name)
+                .orElseThrow(() -> new AssertionError(
+                    name + " was not recognised as a fixed scene sampler"));
+            assertEquals(BindingLayout.Binding.Role.SCENE_SAMPLER, binding.role());
+        }
+        assertTrue(layout.usedBindings().stream().map(BindingLayout.Binding::name)
+                .toList().containsAll(List.of("normals", "specular")),
+            "a declared sampler must appear in usedBindings for the pipeline layout to include it");
+    }
+
+    @Test
     @DisplayName("a struct uniform is refused by name rather than left to fail at link time")
     void structUniformIsRefused() {
         String vertex = """

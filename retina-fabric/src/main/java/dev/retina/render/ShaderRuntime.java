@@ -23,6 +23,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
+import com.mojang.blaze3d.textures.AddressMode;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTexture;
@@ -49,11 +50,13 @@ import net.minecraft.world.level.material.FogType;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.joml.Vector4f;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.IdentityHashMap;
@@ -62,6 +65,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -77,6 +81,15 @@ public final class ShaderRuntime {
     private static final BindGroupLayout UNDERWATER_SAMPLERS = BindGroupLayout.builder()
         .withSampler("SceneColor")
         .withSampler("SceneDepth")
+        .build();
+    // Present on every gbuffer/shadow pipeline unconditionally, like the reserved-but-unused
+    // scene sampler slots BindingLayout already gives normals/specular in retina-core: a pack
+    // that never reads them pays nothing, and one that does never needs a partially-wired
+    // pipeline layout. No resource pack ships _n/_s data for most blocks, so the common case is
+    // this binding, not a pack-authored texture -- see bindPbrDefaults.
+    private static final BindGroupLayout RETINA_PBR_SAMPLERS = BindGroupLayout.builder()
+        .withSampler("normals")
+        .withSampler("specular")
         .build();
     private static final ShaderRuntime INSTANCE = new ShaderRuntime();
 
@@ -187,6 +200,15 @@ public final class ShaderRuntime {
     private boolean loggedEntityShadows;
     private final Map<RenderPass, EntityDrawState> entityPasses = new IdentityHashMap<>();
     private final List<IndexedEntityDraw> entityShadowDraws = new ArrayList<>();
+    // Which live passes currently have one of Retina's substituted scene pipelines bound, so
+    // the normals/specular fallback is bound only where RETINA_PBR_SAMPLERS actually exists in
+    // the pipeline layout. Cleared every frame; entries are per-RenderPass, not per-pipeline.
+    private final Set<RenderPass> scenePbrPasses = Collections.newSetFromMap(new IdentityHashMap<>());
+    private GpuSampler flatPbrSampler;
+    private GpuTexture flatNormalsTexture;
+    private GpuTextureView flatNormalsView;
+    private GpuTexture flatSpecularTexture;
+    private GpuTextureView flatSpecularView;
 
     /**
      * Whether any pack is active that needs vanilla draw state mirrored.
@@ -410,7 +432,12 @@ public final class ShaderRuntime {
                 framebuffer, shadowFramebuffer);
             // Both caches describe the pack that was active a moment ago.
             sceneSubstitutions.clear();
-            capturingDrawState = entityShadowPipeline != null;
+            // Every reason RenderPassMixin's per-draw hooks need to run at all: mirroring draws
+            // for entity shadow replay, or binding the normals/specular fallback onto one of
+            // this pack's substituted scene pipelines. A terrain-only pack needs neither.
+            capturingDrawState = entityShadowPipeline != null || entityPipeline != null
+                || opaqueParticlePipeline != null || translucentParticlePipeline != null
+                || weatherDepthWritePipeline != null || weatherNoDepthWritePipeline != null;
             if (previous != null) {
                 // Keep buffers alive for several rotations so already-submitted command
                 // buffers cannot observe a destroyed allocation during a live pack switch.
@@ -439,6 +466,7 @@ public final class ShaderRuntime {
             loggedEntityShadows = false;
             entityPasses.clear();
             entityShadowDraws.clear();
+            scenePbrPasses.clear();
             String detail = prepared.usesOffscreenTargets()
                 ? "Vulkan terrain MRT + composite/final active"
                 : "Vulkan terrain pipelines active";
@@ -466,6 +494,7 @@ public final class ShaderRuntime {
         RenderPipeline.Builder builder = RenderPipeline.builder()
             .withBindGroupLayout(ShaderChunkRenderer.BIND_GROUP)
             .withBindGroupLayout(RETINA_UNIFORMS)
+            .withBindGroupLayout(RETINA_PBR_SAMPLERS)
             // Sodium adds the exact twenty-byte push-constant range to namespaces that
             // contain "sodium"; Retina uses the same DrawContext ABI.
             .withLocation(Identifier.fromNamespaceAndPath("retina_sodium", suffix))
@@ -544,6 +573,7 @@ public final class ShaderRuntime {
         RenderPipeline.Builder builder = RenderPipeline.builder()
             .withBindGroupLayout(ShaderChunkRenderer.BIND_GROUP)
             .withBindGroupLayout(RETINA_UNIFORMS)
+            .withBindGroupLayout(RETINA_PBR_SAMPLERS)
             .withLocation(Identifier.fromNamespaceAndPath("retina_sodium", suffix))
             .withVertexShader(shader)
             .withFragmentShader(shader)
@@ -574,6 +604,7 @@ public final class ShaderRuntime {
             .withBindGroupLayout(BindGroupLayouts.SAMPLER2)
             .withBindGroupLayout(BindGroupLayouts.SAMPLER1)
             .withBindGroupLayout(RETINA_UNIFORMS)
+            .withBindGroupLayout(RETINA_PBR_SAMPLERS)
             .withLocation(Identifier.fromNamespaceAndPath("retina", suffix))
             .withVertexShader(shader)
             .withFragmentShader(shader)
@@ -607,6 +638,7 @@ public final class ShaderRuntime {
             .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
             .withBindGroupLayout(BindGroupLayouts.SAMPLER2)
             .withBindGroupLayout(BindGroupLayouts.SAMPLER1)
+            .withBindGroupLayout(RETINA_PBR_SAMPLERS)
             .withLocation(Identifier.fromNamespaceAndPath("retina", suffix))
             .withVertexShader(shader)
             .withFragmentShader(shader)
@@ -632,6 +664,7 @@ public final class ShaderRuntime {
             .withBindGroupLayout(BindGroupLayouts.FOG)
             .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
             .withBindGroupLayout(BindGroupLayouts.SAMPLER2)
+            .withBindGroupLayout(RETINA_PBR_SAMPLERS)
             .withLocation(Identifier.fromNamespaceAndPath("retina", suffix))
             .withVertexShader(shader)
             .withFragmentShader(shader)
@@ -658,6 +691,7 @@ public final class ShaderRuntime {
             .withBindGroupLayout(BindGroupLayouts.FOG)
             .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
             .withBindGroupLayout(BindGroupLayouts.SAMPLER2)
+            .withBindGroupLayout(RETINA_PBR_SAMPLERS)
             .withLocation(Identifier.fromNamespaceAndPath("retina", suffix))
             .withVertexShader(shader)
             .withFragmentShader(shader)
@@ -827,6 +861,7 @@ public final class ShaderRuntime {
         ActivePack previous = active;
         active = null;
         sceneSubstitutions.clear();
+        scenePbrPasses.clear();
         capturingDrawState = false;
         frameUniforms = null;
         if (previous != null) {
@@ -985,6 +1020,82 @@ public final class ShaderRuntime {
     }
 
     /**
+     * Records whether {@code pass}'s most recent {@code setPipeline} call landed on one of
+     * Retina's own substituted scene pipelines, i.e. one that declares
+     * {@link #RETINA_PBR_SAMPLERS}. {@code drawIndexed} consults this immediately before each
+     * draw so the fallback is bound only on passes whose current pipeline layout actually has
+     * the slot -- binding it unconditionally would target a resource unrelated pipelines
+     * (vanilla's own, or a pipeline this pack does not override) never declared.
+     */
+    public void trackScenePbrPass(RenderPass pass, boolean pbrPipelineActive) {
+        if (pbrPipelineActive) {
+            scenePbrPasses.add(pass);
+        } else {
+            scenePbrPasses.remove(pass);
+        }
+    }
+
+    /** Binds the normals/specular fallback if {@code pass} currently needs it. */
+    public void bindScenePbrDefaults(RenderPass pass) {
+        if (scenePbrPasses.contains(pass)) {
+            bindPbrDefaults(pass);
+        }
+    }
+
+    /**
+     * Binds the flat "no PBR data" fallback for {@code normals} and {@code specular}.
+     *
+     * <p>Callers that know their pipeline declares {@link #RETINA_PBR_SAMPLERS} unconditionally
+     * -- terrain and the post chain -- call this directly. {@link #bindScenePbrDefaults} is the
+     * gated entry point for the generic scene-draw path, where not every pass has the slot.
+     */
+    public void bindPbrDefaults(RenderPass pass) {
+        ensurePbrDefaults();
+        pass.bindTexture("normals", flatNormalsView, flatPbrSampler);
+        pass.bindTexture("specular", flatSpecularView, flatPbrSampler);
+    }
+
+    /**
+     * Lazily builds the 1x1 fallback textures every PBR-aware pipeline binds when a block has
+     * no pack-authored {@code _n}/{@code _s} texture -- which, absent a PBR resource pack, is
+     * every block. The values follow the encoding OptiFine and LabPBR packs both already expect:
+     * normals (0.5, 0.5, 1.0) is a tangent-space (0, 0, 1) "unmodified surface" normal with
+     * alpha 1.0 for "no parallax offset"; specular all-zero reads as fully rough, non-metallic,
+     * no porosity/subsurface and non-emissive under either spec. Real per-texture sourcing from
+     * a resource pack's own _n/_s files is not implemented yet -- see the README boundary note.
+     */
+    private void ensurePbrDefaults() {
+        if (flatPbrSampler != null) {
+            return;
+        }
+        // Every existing clearColorTexture caller (ColortexFramebuffer, ShadowFramebuffer)
+        // clears a texture created with USAGE_RENDER_ATTACHMENT; omitting it here rejected the
+        // clear outright.
+        int usage = GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_TEXTURE_BINDING
+            | GpuTexture.USAGE_RENDER_ATTACHMENT;
+        GpuTexture normalsTexture = RenderSystem.getDevice().createTexture("Retina flat normals",
+            usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+        GpuTextureView normalsView = RenderSystem.getDevice().createTextureView(normalsTexture);
+        GpuTexture specularTexture = RenderSystem.getDevice().createTexture("Retina flat specular",
+            usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+        GpuTextureView specularView = RenderSystem.getDevice().createTextureView(specularTexture);
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        encoder.clearColorTexture(normalsTexture, new Vector4f(0.5f, 0.5f, 1.0f, 1.0f));
+        encoder.clearColorTexture(specularTexture, new Vector4f(0.0f, 0.0f, 0.0f, 0.0f));
+        // Assigned only once everything above has succeeded: flatPbrSampler is the guard this
+        // method checks on entry, so setting it any earlier would make a failure partway through
+        // permanent -- every later call would see initialization as already done and skip it,
+        // leaving these textures bound with undefined contents for the rest of the session.
+        flatNormalsTexture = normalsTexture;
+        flatNormalsView = normalsView;
+        flatSpecularTexture = specularTexture;
+        flatSpecularView = specularView;
+        flatPbrSampler = RenderSystem.getDevice().createSampler(
+            AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
+            FilterMode.NEAREST, FilterMode.NEAREST, 1, OptionalDouble.of(0.0));
+    }
+
+    /**
      * Returns the in-memory source for one active pipeline identity.
      *
      * <p>Minecraft clears its Vulkan pipeline cache during resource reloads. The backend
@@ -1006,9 +1117,15 @@ public final class ShaderRuntime {
         ActivePack current = active;
         entityPasses.clear();
         entityShadowDraws.clear();
+        scenePbrPasses.clear();
         if (current == null) {
             return;
         }
+        // Ensures the fallback textures exist before any render pass opens this frame. Every
+        // other call site reaches ensurePbrDefaults() from inside an open render pass (a draw
+        // hook), where issuing a texture clear -- as first creation does -- is not valid; this
+        // call is what makes those later calls the guaranteed no-ops they need to be.
+        ensurePbrDefaults();
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         if (current.framebuffer() != null) {
             com.mojang.blaze3d.pipeline.RenderTarget main =
@@ -1223,6 +1340,10 @@ public final class ShaderRuntime {
         try (RenderPass pass = encoder.createRenderPass(descriptor)) {
             pass.setPipeline(current.entityShadowPipeline());
             pass.setUniform("RetinaUniforms", shadowUniforms);
+            // This pass never goes through RenderPassMixin's substitution path -- the pipeline
+            // is already Retina's own -- so the generic scenePbrPasses tracking never sees it
+            // and the fallback must be bound explicitly here instead.
+            bindPbrDefaults(pass);
             for (IndexedEntityDraw draw : entityShadowDraws) {
                 for (Map.Entry<String, GpuBufferSlice> uniform : draw.state().uniforms.entrySet()) {
                     pass.setUniform(uniform.getKey(), uniform.getValue());
@@ -1370,9 +1491,9 @@ public final class ShaderRuntime {
         }
     }
 
-    private static void executePost(ActivePack current, CommandEncoder encoder,
-                                    PreparedTerrainPack.PostProgram program,
-                                    GpuBufferSlice uniforms, boolean finalPass) {
+    private void executePost(ActivePack current, CommandEncoder encoder,
+                             PreparedTerrainPack.PostProgram program,
+                             GpuBufferSlice uniforms, boolean finalPass) {
         ColortexFramebuffer framebuffer = current.framebuffer();
         for (String sampler : program.samplers()) {
             if (sampler.startsWith("colortex")) {
@@ -1444,6 +1565,12 @@ public final class ShaderRuntime {
                     int index = Integer.parseInt(sampler.substring("shadowcolor".length()));
                     renderPass.bindTexture(sampler, current.shadowFramebuffer().colorView(index),
                         RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
+                } else if (sampler.equals("normals") || sampler.equals("specular")) {
+                    // Composite/deferred stages normally re-read a colortex the pack itself
+                    // wrote normals/specular data into during gbuffers, but nothing stops a
+                    // program from declaring the raw sampler directly; bind the same fallback
+                    // the gbuffer stages get rather than leaving the slot unbound.
+                    bindPbrDefaults(renderPass);
                 }
             }
             renderPass.draw(3, 1, 0, 0);

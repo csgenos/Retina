@@ -37,6 +37,12 @@ Fixes from the 0.1.0 audit in `docs/AUDIT_2026-08-14.md`.
   candidate entry.
 - The icon on Retina's page inside Sodium's settings menu now actually renders. It was wired to
   `retina:icon`, a texture path that never existed, so the page has never shown one.
+- Added `normals` and `specular` PBR samplers to every gbuffer, shadow, and applicable
+  post-processing pipeline. A pack that declares them now compiles, links, and renders instead of
+  either failing outright or leaving an unbound descriptor; they read a flat "no data" default
+  until real per-block `_n`/`_s` texture sourcing from the active resource pack lands (tracked
+  separately). This is expected to be the fix for packs, including Sildur's, that previously
+  would not load at all once they referenced either sampler.
 
 ## 0.1.0+mc26.2 — prerelease
 
