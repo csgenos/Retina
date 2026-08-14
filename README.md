@@ -16,8 +16,7 @@ release artifact and platform-upload checklist.
 
 With Sodium 0.9.1, Retina registers through Sodium's public configuration API. Open Sodium's
 Video Settings screen and select the **Retina** section in the left navigation; **Shader Packs**
-opens Retina's pack browser, while **Renderer** exposes Retina's profile, debug overlay, and
-parallel-compilation settings. This also works with clients that replace vanilla Video Settings,
+opens Retina's pack browser, while **Renderer** exposes Retina's profile. This also works with clients that replace vanilla Video Settings,
 including Lunar's Sodium screen. The ordinary Minecraft Video Settings button remains as a
 fallback when Sodium's screen is not in use.
 
@@ -109,6 +108,12 @@ lighting; it proves renderer stages rather than visual polish.
   Iris `shaders.properties` expression ecosystem are not live yet.
 - Packs requiring a non-full-resolution/non-RGBA8 `colortex0` use a safe terrain-only fallback
   rather than bind an incompatible main scene target.
+- Pack-declared vertex attributes such as `mc_Entity`, `mc_midTexCoord`, `at_tangent`, and
+  `at_midBlock` are accepted, given locations, and compile, but none of the vertex formats
+  Retina draws through supplies them yet, so they read zero. An effect keyed on one of them
+  behaves as though every block were untagged; sourcing the real data is separate work.
+- A debug overlay and a parallel shader-compilation pool are both wanted and neither exists.
+  Sodium's **Renderer** page therefore lists only the profile selector.
 
 ## Roadmap
 
@@ -146,6 +151,6 @@ Apply. Selecting the active pack again reloads it; closing pack settings reloads
 ./gradlew build
 ```
 
-The build runs 74 backend-neutral tests plus three Fabric compiler/bridge tests. See
+The build runs 88 backend-neutral tests plus three Fabric compiler/bridge tests. See
 `docs/BUILDING.md`, `docs/ARCHITECTURE_AUDIT.md`, `docs/LIVE_RENDER_VALIDATION.md`, and
 `docs/BENCHMARKS.md` for engineering detail, live validation, and performance protocol.

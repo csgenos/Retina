@@ -335,8 +335,8 @@ public final class TerrainPackCompiler {
         String name = ProgramId.GBUFFERS_ENTITIES.sourceName();
         PackPath vertexPath = shadersRoot.resolve(name + ".vsh");
         PackPath fragmentPath = shadersRoot.resolve(name + ".fsh");
-        boolean hasVertex = source.readText(vertexPath).isPresent();
-        boolean hasFragment = source.readText(fragmentPath).isPresent();
+        boolean hasVertex = source.exists(vertexPath);
+        boolean hasFragment = source.exists(fragmentPath);
         if (!hasVertex && !hasFragment) {
             return null;
         }
@@ -389,8 +389,8 @@ public final class TerrainPackCompiler {
         String name = programId.sourceName();
         PackPath vertexPath = shadersRoot.resolve(name + ".vsh");
         PackPath fragmentPath = shadersRoot.resolve(name + ".fsh");
-        boolean hasVertex = source.readText(vertexPath).isPresent();
-        boolean hasFragment = source.readText(fragmentPath).isPresent();
+        boolean hasVertex = source.exists(vertexPath);
+        boolean hasFragment = source.exists(fragmentPath);
         if (!hasVertex && !hasFragment) {
             return null;
         }
@@ -443,8 +443,8 @@ public final class TerrainPackCompiler {
         }
         PackPath vertexPath = shadersRoot.resolve("shadow.vsh");
         PackPath fragmentPath = shadersRoot.resolve("shadow.fsh");
-        boolean hasVertex = source.readText(vertexPath).isPresent();
-        boolean hasFragment = source.readText(fragmentPath).isPresent();
+        boolean hasVertex = source.exists(vertexPath);
+        boolean hasFragment = source.exists(fragmentPath);
         if (!hasVertex && !hasFragment) {
             return null;
         }
@@ -592,8 +592,10 @@ public final class TerrainPackCompiler {
         throws IOException, CompilationException {
         PackPath vertexPath = shadersRoot.resolve(name + ".vsh");
         PackPath fragmentPath = shadersRoot.resolve(name + ".fsh");
-        boolean hasVertex = source.readText(vertexPath).isPresent();
-        boolean hasFragment = source.readText(fragmentPath).isPresent();
+        // exists() is an index probe. readText().isPresent() decompresses the whole entry, and
+        // the numbered-pass scan asks about hundreds of files that are usually absent.
+        boolean hasVertex = source.exists(vertexPath);
+        boolean hasFragment = source.exists(fragmentPath);
         if (!hasVertex && !hasFragment) {
             return null;
         }
@@ -887,7 +889,7 @@ public final class TerrainPackCompiler {
         for (ProgramId candidate : requested.fallbackChain()) {
             PackPath vertex = root.resolve(candidate.sourceName() + ".vsh");
             PackPath fragment = root.resolve(candidate.sourceName() + ".fsh");
-            if (source.readText(vertex).isPresent() && source.readText(fragment).isPresent()) {
+            if (source.exists(vertex) && source.exists(fragment)) {
                 return candidate;
             }
         }

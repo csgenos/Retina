@@ -6,6 +6,7 @@
 package dev.retina.render;
 
 import dev.retina.core.translate.LegacyBuiltins;
+import dev.retina.core.uniform.Std140Layout;
 import dev.retina.core.uniform.UniformSchema;
 
 import java.nio.ByteBuffer;
@@ -14,69 +15,62 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** A single deterministic std140 layout shared by every terrain program in an active pack. */
+/**
+ * A single deterministic std140 layout shared by every terrain program in an active pack.
+ *
+ * <p>The offset arithmetic itself lives in {@link Std140Layout}, in {@code retina-core}, where
+ * it is checked against the offsets a real compiler assigns. Keeping it there is not tidiness:
+ * a CPU-side offset that disagrees with the shader's links cleanly and renders, so the only way
+ * to know the two agree is to compile the block and compare, and that test cannot run in a
+ * module that needs Minecraft on the classpath.
+ */
 public final class TerrainUniformLayout {
-    public record Member(String name, String type, int offset, int size) {
+
+    /** One member of the block, with the offset the shader will read it from. */
+    public record Member(String name, String type, int arrayLength, int offset, int size) {
     }
 
+    private final Std140Layout layout;
     private final List<Member> members;
-    private final int size;
 
-    private TerrainUniformLayout(List<Member> members, int size) {
-        this.members = List.copyOf(members);
-        this.size = size;
+    private TerrainUniformLayout(Std140Layout layout) {
+        this.layout = layout;
+        this.members = layout.members().stream()
+            .map(member -> new Member(member.name(), member.glslType(), member.arrayLength(),
+                member.offset(), member.size()))
+            .toList();
     }
 
     /**
      * Builds the union of legacy matrices, pack-declared values, and Retina scene values.
      * The same block is emitted into both shader stages and every terrain pass.
      */
-    public static TerrainUniformLayout build(Map<String, String> packMembers) {
-        Map<String, String> union = new LinkedHashMap<>();
+    public static TerrainUniformLayout build(List<Std140Layout.Declaration> packMembers) {
+        Map<String, Std140Layout.Declaration> union = new LinkedHashMap<>();
         LegacyBuiltins.MATRIX_UNIFORMS.values().stream()
             .sorted(java.util.Comparator.comparing(LegacyBuiltins.MatrixUniform::glslName))
-            .forEach(value -> union.put(value.glslName(), value.glslType()));
-        packMembers.forEach((name, type) -> putCompatible(union, name, type));
+            .forEach(value -> union.put(value.glslName(),
+                new Std140Layout.Declaration(value.glslName(), value.glslType())));
+        packMembers.forEach(declaration -> putCompatible(union, declaration));
         UniformSchema.standard().alwaysPresent()
-            .forEach(entry -> putCompatible(union, entry.name(), entry.glslType()));
-
-        List<Member> laidOut = new ArrayList<>();
-        int offset = 0;
-        for (Map.Entry<String, String> entry : union.entrySet()) {
-            TypeLayout type = typeLayout(entry.getValue());
-            offset = align(offset, type.alignment());
-            laidOut.add(new Member(entry.getKey(), entry.getValue(), offset, type.size()));
-            offset += type.size();
-        }
-        return new TerrainUniformLayout(laidOut, align(offset, 16));
+            .forEach(entry -> putCompatible(union,
+                new Std140Layout.Declaration(entry.name(), entry.glslType())));
+        return new TerrainUniformLayout(Std140Layout.of(new ArrayList<>(union.values())));
     }
 
-    private static void putCompatible(Map<String, String> union, String name, String type) {
-        String previous = union.putIfAbsent(name, type);
-        if (previous != null && !previous.equals(type)) {
-            throw new IllegalArgumentException("uniform '" + name + "' is declared as both "
-                + previous + " and " + type);
+    private static void putCompatible(Map<String, Std140Layout.Declaration> union,
+                                      Std140Layout.Declaration declaration) {
+        Std140Layout.Declaration previous = union.putIfAbsent(declaration.name(), declaration);
+        if (previous != null && !previous.equals(declaration)) {
+            throw new IllegalArgumentException("uniform '" + declaration.name()
+                + "' is declared as both " + describe(previous) + " and "
+                + describe(declaration));
         }
     }
 
-    private record TypeLayout(int alignment, int size) {
-    }
-
-    private static TypeLayout typeLayout(String type) {
-        return switch (type) {
-            case "float", "int", "uint", "bool" -> new TypeLayout(4, 4);
-            case "vec2", "ivec2", "uvec2" -> new TypeLayout(8, 8);
-            case "vec3", "ivec3", "uvec3", "vec4", "ivec4", "uvec4" ->
-                new TypeLayout(16, 16);
-            case "mat3" -> new TypeLayout(16, 48);
-            case "mat4" -> new TypeLayout(16, 64);
-            default -> throw new IllegalArgumentException("terrain uniform type '" + type
-                + "' is not supported by the std140 uploader");
-        };
-    }
-
-    private static int align(int value, int alignment) {
-        return (value + alignment - 1) / alignment * alignment;
+    private static String describe(Std140Layout.Declaration declaration) {
+        return declaration.glslType()
+            + (declaration.arrayLength() > 0 ? "[" + declaration.arrayLength() + "]" : "");
     }
 
     public List<Member> members() {
@@ -84,21 +78,17 @@ public final class TerrainUniformLayout {
     }
 
     public int size() {
-        return size;
+        return layout.size();
     }
 
     /** GLSL body (without the enclosing block). */
     public String glslMembers() {
-        StringBuilder out = new StringBuilder();
-        for (Member member : members) {
-            out.append("    ").append(member.type()).append(' ')
-                .append(member.name()).append(";\n");
-        }
-        return out.toString();
+        return layout.glslMembers();
     }
 
     /** Zeroes the block before writing known values, so custom uniforms are deterministic. */
     public void clear(ByteBuffer buffer) {
+        int size = layout.size();
         for (int i = 0; i < size; i += Long.BYTES) {
             if (i + Long.BYTES <= size) {
                 buffer.putLong(i, 0L);
