@@ -35,6 +35,8 @@ Fixes from the 0.1.0 audit in `docs/AUDIT_2026-08-14.md`.
   pipeline substitution is memoised per pipeline instead of re-comparing resource paths on every
   bind. Pack compilation probes for files with an index lookup rather than decompressing each
   candidate entry.
+- The icon on Retina's page inside Sodium's settings menu now actually renders. It was wired to
+  `retina:icon`, a texture path that never existed, so the page has never shown one.
 
 ## 0.1.0+mc26.2 — prerelease
 
