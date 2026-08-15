@@ -98,8 +98,23 @@ jobs:
             echo "::error::Expected release jar not found at $jar"
             exit 1
           fi
-          gh release create "${GITHUB_REF_NAME}" \
-            "$jar" \
-            --title "Retina ${{ steps.version.outputs.full }}" \
-            --notes-file /tmp/release-notes.md \
-            --prerelease
+          # gh release create errors outright if a release for this tag already exists (no
+          # --clobber -- that flag exists only on `gh release upload`, for individual asset
+          # files). That can genuinely happen: someone drafting a release for this tag through
+          # GitHub's own UI, or re-running this job after a partial failure. Edit-in-place rather
+          # than delete-then-create: deleting first would leave the tag with no release at all if
+          # anything failed between the delete and the recreate, and would destroy any assets a
+          # maintainer had attached beyond the jar this workflow manages.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" \
+              --title "Retina ${{ steps.version.outputs.full }}" \
+              --notes-file /tmp/release-notes.md \
+              --prerelease
+            gh release upload "${GITHUB_REF_NAME}" "$jar" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              "$jar" \
+              --title "Retina ${{ steps.version.outputs.full }}" \
+              --notes-file /tmp/release-notes.md \
+              --prerelease
+          fi
