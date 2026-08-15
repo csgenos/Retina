@@ -45,6 +45,16 @@ Fixes from the 0.1.0 audit in `docs/AUDIT_2026-08-14.md`.
   all once they referenced either sampler -- an unrelated compile-time allowlist in
   `TerrainPackCompiler` that predated this feature was still refusing both names outright and
   needed updating too; the 0.2.0 release still has this gap.
+- Audited every name `BindingLayout` recognises as a scene sampler against what actually gets
+  bound at runtime and what both of `TerrainPackCompiler`'s compile-time allowlists permit
+  (`rejectUnboundResources` for terrain/entity/particle/shadow, `postSamplers` for
+  prepare/deferred/composite/final/shadowcomp), rather than continuing to patch one refused name
+  at a time as packs hit them. Found and fixed two more real gaps of the same shape as
+  normals/specular: `noisetex` now binds a flat fallback everywhere `normals`/`specular` do
+  (this was the exact refusal Sildur's hit right after the normals/specular fix), and
+  `depthtex0` now binds the real main scene depth, but only in post-processing pipelines, where
+  it is a complete finished snapshot by the time any program reads it. `depthtex1`/`depthtex2`
+  and `colortex*` as a gbuffer-stage input remain refused; see the README boundary notes.
 - Pushing a bare version tag (e.g. `0.2.0`) now publishes a GitHub release automatically, with the
   built jar attached and a `CHANGELOG.md` section as the release body. Nothing needs pre-editing:
   the tag supplies the version and the Minecraft component always comes from the committed

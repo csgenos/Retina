@@ -81,10 +81,11 @@ lighting; it proves renderer stages rather than visual polish.
 - Weather shaders: optional `gbuffers_weather.vsh/fsh` runs for Minecraft's weather depth-write
   and no-depth-write quad pipelines, preserving their translucent blend/depth behavior and the
   particle-format transform, fog, texture, and lightmap ABI.
-- PBR samplers: `normals` and `specular` are real bound samplers on every terrain, entity,
-  particle, weather, shadow, and applicable post-processing pipeline, so a pack that declares
-  them compiles and renders instead of failing to load. See Known boundaries for what they are
-  bound to.
+- Extra samplers: `normals`, `specular`, and `noisetex` are real bound samplers on every terrain,
+  entity, particle, weather, shadow, and applicable post-processing pipeline, so a pack that
+  declares them compiles and renders instead of failing to load. `depthtex0` additionally binds
+  the real main scene depth in post-processing pipelines specifically. See Known boundaries for
+  what the fallback samplers are bound to.
 - Standard entity-format shadow casters: Retina records the original indexed buffers, dynamic
   transform UBO, and atlas binding, then replays compatible `pipeline/entity_*` draws into the
   terrain shadow map with alpha testing. This also covers a block entity when its renderer uses
@@ -122,6 +123,16 @@ lighting; it proves renderer stages rather than visual polish.
   zero smoothness/metalness/porosity/emission) rather than a resource pack's own `_n`/`_s`
   textures, which are not sourced yet. A pack renders as though every block were untagged for
   PBR, the same safe fallback OptiFine and Iris use for a block with no `_n`/`_s` texture.
+- `noisetex` is likewise always bound rather than refused, but to a single flat mid-value pixel,
+  not a real noise pattern. Real `noisetex` is a tileable texture of spatially varying
+  pseudo-random values; packs commonly threshold it for dithering, where a constant produces a
+  hard cutoff instead of a smooth dither. A generated per-pixel noise texture is unimplemented
+  follow-up work, not covered by this fallback.
+- `depthtex0` binds the real main scene depth, but only in post-processing pipelines
+  (prepare/deferred/composite/final/shadowcomp) -- reading it from a gbuffer stage while that
+  same stage is still writing the depth attachment it would read is not implemented.
+  `depthtex1`/`depthtex2` (opaque-only and no-handheld-item depth in the OptiFine convention) and
+  reading `colortex*` as an input from a gbuffer stage are not implemented at all yet.
 - A debug overlay and a parallel shader-compilation pool are both wanted and neither exists.
   Sodium's **Renderer** page therefore lists only the profile selector.
 

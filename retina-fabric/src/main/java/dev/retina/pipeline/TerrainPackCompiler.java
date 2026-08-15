@@ -747,18 +747,26 @@ public final class TerrainPackCompiler {
             adapted.fragmentSource(), adapted.cull());
     }
 
+    private static final Set<String> POST_EXTRA_RESOURCES =
+        Set.of("normals", "specular", "noisetex", "depthtex0");
+
     private static Map<String, String> postSamplers(String program, TranslatedSource... stages)
         throws CompilationException {
         Map<String, String> samplers = new LinkedHashMap<>();
         for (TranslatedSource stage : stages) {
             for (BindingLayout.Binding binding : stage.bindings()) {
                 String resource = BindingLayout.canonicalName(binding.name());
+                // depthtex0 is real data (ShaderRuntime.executePost reads the main depth
+                // attachment directly); normals/specular/noisetex are the same flat fallback
+                // bindPbrDefaults gives every gbuffer/shadow stage. depthtex1/depthtex2 and
+                // colortex-as-input for gbuffer stages are not implemented -- see README.
                 if (!resource.matches("colortex(?:[0-9]|1[0-5])")
                     && !resource.matches("shadowtex[01]|shadow|shadowcolor[01]")
-                    && !resource.equals("normals") && !resource.equals("specular")) {
+                    && !POST_EXTRA_RESOURCES.contains(resource)) {
                     throw new CompilationException(program + " uses resource '" + resource
                         + "' (" + binding.glslType() + "); composite/final currently bind"
-                        + " colortex, shadow-map, and normals/specular samplers only");
+                        + " colortex, shadow-map, normals/specular/noisetex, and depthtex0"
+                        + " samplers only");
                 }
                 String previous = samplers.putIfAbsent(resource, binding.glslType());
                 if (previous != null && !previous.equals(binding.glslType())) {
@@ -899,11 +907,14 @@ public final class TerrainPackCompiler {
     }
 
     // gtexture/lightmap are supplied by renaming onto Sodium's/vanilla's own bound resources
-    // (TerrainShaderAdapter, EntityShaderAdapter, ParticleShaderAdapter); normals/specular are
-    // supplied by ShaderRuntime's own RETINA_PBR_SAMPLERS bind group and flat fallback texture,
-    // added to every one of these pipelines. Anything else declared here has nothing behind it.
+    // (TerrainShaderAdapter, EntityShaderAdapter, ParticleShaderAdapter); normals/specular/
+    // noisetex are supplied by ShaderRuntime's own RETINA_PBR_SAMPLERS bind group and flat
+    // fallback textures, added to every one of these pipelines. Anything else declared here has
+    // nothing behind it -- this must track ShaderRuntime.bindPbrDefaults exactly, or a resource
+    // it does bind gets refused here before ever reaching that code (as normals/specular did
+    // until this comment was added, and as noisetex did until this fix).
     private static final Set<String> BOUND_RESOURCES =
-        Set.of("gtexture", "lightmap", "normals", "specular");
+        Set.of("gtexture", "lightmap", "normals", "specular", "noisetex");
 
     private static void rejectUnboundResources(String name, TranslatedSource... stages)
         throws CompilationException {
