@@ -98,6 +98,13 @@ jobs:
             echo "::error::Expected release jar not found at $jar"
             exit 1
           fi
+          # gh release create has no --clobber (that flag exists only on `gh release upload`,
+          # for individual asset files); it errors outright if a release for this tag already
+          # exists. That can genuinely happen -- someone drafting a release for this tag through
+          # GitHub's own UI, or re-running this job -- so clear any existing release first. This
+          # only removes the release object, never the tag itself (no --cleanup-tag), and the
+          # `|| true` covers the normal case where there was nothing to delete.
+          gh release delete "${GITHUB_REF_NAME}" --yes || true
           gh release create "${GITHUB_REF_NAME}" \
             "$jar" \
             --title "Retina ${{ steps.version.outputs.full }}" \
