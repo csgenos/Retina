@@ -41,8 +41,10 @@ Fixes from the 0.1.0 audit in `docs/AUDIT_2026-08-14.md`.
   post-processing pipeline. A pack that declares them now compiles, links, and renders instead of
   either failing outright or leaving an unbound descriptor; they read a flat "no data" default
   until real per-block `_n`/`_s` texture sourcing from the active resource pack lands (tracked
-  separately). This is expected to be the fix for packs, including Sildur's, that previously
-  would not load at all once they referenced either sampler.
+  separately). This is the fix for packs, including Sildur's, that previously would not load at
+  all once they referenced either sampler -- an unrelated compile-time allowlist in
+  `TerrainPackCompiler` that predated this feature was still refusing both names outright and
+  needed updating too; the 0.2.0 release still has this gap.
 - Pushing a bare version tag (e.g. `0.2.0`) now publishes a GitHub release automatically, with the
   built jar attached and a `CHANGELOG.md` section as the release body. Nothing needs pre-editing:
   the tag supplies the version and the Minecraft component always comes from the committed

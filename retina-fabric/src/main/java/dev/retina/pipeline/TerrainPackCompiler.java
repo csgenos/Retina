@@ -897,12 +897,19 @@ public final class TerrainPackCompiler {
             + requested.sourceName() + " or its fallback chain");
     }
 
+    // gtexture/lightmap are supplied by renaming onto Sodium's/vanilla's own bound resources
+    // (TerrainShaderAdapter, EntityShaderAdapter, ParticleShaderAdapter); normals/specular are
+    // supplied by ShaderRuntime's own RETINA_PBR_SAMPLERS bind group and flat fallback texture,
+    // added to every one of these pipelines. Anything else declared here has nothing behind it.
+    private static final Set<String> BOUND_RESOURCES =
+        Set.of("gtexture", "lightmap", "normals", "specular");
+
     private static void rejectUnboundResources(String name, TranslatedSource... stages)
         throws CompilationException {
         for (TranslatedSource stage : stages) {
             for (BindingLayout.Binding binding : stage.bindings()) {
                 String resource = binding.name();
-                if (!resource.equals("gtexture") && !resource.equals("lightmap")) {
+                if (!BOUND_RESOURCES.contains(resource)) {
                     throw new CompilationException(name + " uses resource '" + resource
                         + "' (" + binding.glslType() + "), which the Sodium terrain pass"
                         + " cannot bind yet");
