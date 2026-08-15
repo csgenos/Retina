@@ -909,19 +909,31 @@ public final class TerrainPackCompiler {
     // gtexture/lightmap are supplied by renaming onto Sodium's/vanilla's own bound resources
     // (TerrainShaderAdapter, EntityShaderAdapter, ParticleShaderAdapter); normals/specular/
     // noisetex are supplied by ShaderRuntime's own RETINA_PBR_SAMPLERS bind group and flat
-    // fallback textures, added to every one of these pipelines. Anything else declared here has
-    // nothing behind it -- this must track ShaderRuntime.bindPbrDefaults exactly, or a resource
-    // it does bind gets refused here before ever reaching that code (as normals/specular did
-    // until this comment was added, and as noisetex did until this fix).
+    // fallback textures, added to every one of these pipelines. shadowtex0/shadowtex1/shadow/
+    // shadowcolor0/shadowcolor1 are real data too, now that ShaderRuntime renders the terrain
+    // shadow map at the start of the frame, before the main scene draws
+    // (ShaderRuntime.renderIndependentTerrainShadows, called from beginWorldFrame) -- except for
+    // the shadow program itself, excluded below, which is what is currently writing that same
+    // shadow map this same draw. Anything else declared here has nothing behind it -- this must
+    // track what ShaderRuntime actually binds for these pipelines, or a resource it does bind
+    // gets refused here before ever reaching that code (as normals/specular did until this
+    // comment was added, and as noisetex did until a later fix).
     private static final Set<String> BOUND_RESOURCES =
-        Set.of("gtexture", "lightmap", "normals", "specular", "noisetex");
+        Set.of("gtexture", "lightmap", "normals", "specular", "noisetex",
+            "shadowtex0", "shadowtex1", "shadow", "shadowcolor0", "shadowcolor1");
 
     private static void rejectUnboundResources(String name, TranslatedSource... stages)
         throws CompilationException {
         for (TranslatedSource stage : stages) {
             for (BindingLayout.Binding binding : stage.bindings()) {
                 String resource = binding.name();
-                if (!BOUND_RESOURCES.contains(resource)) {
+                // The shadow program is what is currently writing the shadow map this same
+                // draw; sampling it from within that same draw is the same same-pass hazard
+                // depthtex0 has for every other caller of this gate, just for the shadow
+                // attachment instead of the main one.
+                boolean shadowSamplingItself = name.equals("shadow")
+                    && resource.matches("shadowtex[01]|shadow|shadowcolor[01]");
+                if (!BOUND_RESOURCES.contains(resource) || shadowSamplingItself) {
                     throw new CompilationException(name + " uses resource '" + resource
                         + "' (" + binding.glslType() + "), which the Sodium terrain pass"
                         + " cannot bind yet" + unboundReason(name, resource));
@@ -935,26 +947,36 @@ public final class TerrainPackCompiler {
      * still refuses, so the message says whether a refusal is a missing allowlist entry (which
      * would be a bug -- see the audit note on {@link #BOUND_RESOURCES}) or a real architecture
      * gap. Keep in sync with what {@code postSamplers} allows and {@code ShaderRuntime.executePost}
-     * actually binds: everything named here is a name that gate allows and this one does not,
-     * on purpose. Unrecognised, pack-custom resource names fall through to no reason at all.
+     * actually binds, and with what {@code BOUND_RESOURCES} and {@code rejectUnboundResources}'s
+     * {@code shadowSamplingItself} check actually permit. Unrecognised, pack-custom resource
+     * names fall through to no reason at all.
      *
-     * <p>{@code program} matters for {@code depthtex0}: every other caller of this gate (terrain,
-     * entities, particles, weather) runs while Minecraft's normal world render pass is still
-     * writing that exact attachment, but {@code shadow} is replayed separately, after that pass
-     * has already returned (see {@code LevelRendererMixin}), into its own depth attachment --
-     * the "still being written" hazard does not apply to it, so it needs its own explanation.
+     * <p>{@code program} matters for both {@code depthtex0} and the shadow-map names now.
+     * Terrain/entities/particles/weather run as part of Minecraft's normal world render pass;
+     * {@code shadow} does not -- {@code ShaderRuntime.renderIndependentTerrainShadows} now runs
+     * it at the very start of the frame (from {@code beginWorldFrame}), before that normal
+     * render pass has drawn anything at all this frame. That is why {@code depthtex0} is
+     * refused for a different reason for {@code shadow} than for everyone else, and why the
+     * shadow-map names themselves are refused only for {@code shadow} -- it is the one program
+     * still writing the very attachment those names would read, this same draw.
      */
     private static String unboundReason(String program, String resource) {
         if (resource.matches("shadowtex[01]|shadow|shadowcolor[01]")) {
-            return ": Retina renders the shadow map after the main scene, not before it as the"
-                + " OptiFine/Iris convention assumes, so it has no data yet at this stage; only"
-                + " prepare/deferred/composite/final/shadowcomp programs can read it";
+            if (program.equals("shadow")) {
+                return ": the shadow program is what is currently writing the shadow map this"
+                    + " same draw; sampling it from within that same draw is not implemented,"
+                    + " the same same-pass hazard depthtex0 has for every other program, just"
+                    + " for this attachment instead";
+            }
+            return ": this name is normally bound by now -- if you are seeing this, the"
+                + " allowlist and this message have gone out of sync, please report it";
         }
         if (resource.equals("depthtex0")) {
             if (program.equals("shadow")) {
-                return ": the shadow program writes its own separate shadow depth attachment,"
-                    + " not this one -- the main scene's depthtex0 is actually complete by the"
-                    + " time shadow replays, but nothing binds it into the shadow pipeline yet";
+                return ": the shadow program now runs at the start of the frame, before the"
+                    + " main scene has drawn anything at all this frame, so depthtex0 does not"
+                    + " hold this frame's main scene depth at this point either -- and it"
+                    + " writes its own separate shadow depth attachment regardless, not this one";
             }
             return ": this stage is still writing the depth attachment depthtex0 would read;"
                 + " only post-processing programs can read it";

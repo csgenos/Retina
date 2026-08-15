@@ -86,6 +86,13 @@ lighting; it proves renderer stages rather than visual polish.
   declares them compiles and renders instead of failing to load. `depthtex0` additionally binds
   the real main scene depth in post-processing pipelines specifically. See Known boundaries for
   what the fallback samplers are bound to.
+- Terrain shadow map, real-time in gbuffer programs: `shadowtex0`, `shadowtex1`, `shadow`, and
+  `shadowcolor0`/`shadowcolor1` are real, independently-culled shadow-map data on terrain, entity,
+  particle, and weather pipelines, not just from post-processing programs. The shadow map is
+  rendered at the start of each frame, before the main scene, using Sodium's own frustum-culling
+  machinery for the light's camera rather than replaying the main camera's visible list -- see
+  Known boundaries for the one input that is still a frame behind, and why that is not a
+  regression back to a full temporal replay.
 - Standard entity-format shadow casters: Retina records the original indexed buffers, dynamic
   transform UBO, and atlas binding, then replays compatible `pipeline/entity_*` draws into the
   terrain shadow map with alpha testing. This also covers a block entity when its renderer uses
@@ -133,14 +140,23 @@ lighting; it proves renderer stages rather than visual polish.
   same stage is still writing the depth attachment it would read is not implemented.
   `depthtex1`/`depthtex2` (opaque-only and no-handheld-item depth in the OptiFine convention) and
   reading `colortex*` as an input from a gbuffer stage are not implemented at all yet.
-- `shadowtex0`, `shadowtex1`, `shadow`, and `shadowcolor0`/`shadowcolor1` are likewise readable
-  only from prepare/deferred/composite/final/shadowcomp programs, never from terrain, entity,
-  particle, weather, or `shadow` programs themselves. Retina generates the shadow map by replaying
-  the main camera's already-visible terrain list from the light's view *after* the whole main
-  scene renders, not before it as the OptiFine/Iris convention assumes, so a gbuffer-stage program
-  has no shadow map to read yet. Packs that sample the shadow map directly in a gbuffer program --
-  a common technique for cheap sun/moon shadowing -- cannot load until this is reordered, which
-  needs independent shadow-frustum culling Retina does not have yet; tracked in #22.
+- `shadowtex0`, `shadowtex1`, `shadow`, and `shadowcolor0`/`shadowcolor1` are real, bound samplers
+  on terrain, entity, particle, and weather pipelines too, not just post-processing ones. **This
+  requires a patched Sodium build and does not work against stock Sodium 0.9.1** -- the patch is
+  at `csgenos/sodium`, and `retina-fabric`'s own dependency has not been switched over to it yet,
+  pending publishing the patched build somewhere Gradle can fetch it from. Retina
+  now renders the terrain shadow map at the start of each frame, before the main scene, using a
+  patched Sodium build that can cull an independent camera's visibility without disturbing the
+  main camera's own -- not a replay of whatever the main camera happened to draw, which is what
+  made this unsafe before (tracked in #22, now resolved this way instead of the reorder-without-
+  independent-culling approach originally scoped there). The `shadow` program itself is the one
+  exception: it is what is currently writing the shadow map that same draw, so sampling it from
+  within `shadow.vsh`/`shadow.fsh` remains refused, the same same-pass hazard `depthtex0` has
+  everywhere else. The camera position used to centre the shadow volume, and the terrain texture
+  sampler, are one frame behind (this frame's own capture hasn't happened yet at the point the
+  shadow map renders) -- imperceptible at normal movement speeds, since it affects only where a
+  100+ block wide volume is centred, not which geometry it contains; the shadow map's actual
+  content is computed fresh every frame with no lag.
 - A debug overlay and a parallel shader-compilation pool are both wanted and neither exists.
   Sodium's **Renderer** page therefore lists only the profile selector.
 

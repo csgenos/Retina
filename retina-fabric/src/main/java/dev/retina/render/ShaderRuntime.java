@@ -38,17 +38,23 @@ import dev.retina.pipeline.TerrainPackCompiler;
 import dev.retina.vk.VulkanBackend;
 import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.render.chunk.ShaderChunkRenderer;
+import net.caffeinemc.mods.sodium.client.render.chunk.lists.SortedRenderLists;
+import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
+import net.caffeinemc.mods.sodium.client.render.viewport.Viewport;
+import net.caffeinemc.mods.sodium.client.render.viewport.frustum.SimpleFrustum;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.DynamicUniformStorage;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.material.FogType;
+import org.joml.FrustumIntersection;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.slf4j.Logger;
@@ -85,12 +91,18 @@ public final class ShaderRuntime {
     // Present on every gbuffer/shadow pipeline unconditionally, like the reserved-but-unused
     // scene sampler slots BindingLayout already gives these names in retina-core: a pack that
     // never reads them pays nothing, and one that does never needs a partially-wired pipeline
-    // layout. Despite the name this now also covers noisetex, which isn't PBR data but needs the
-    // same "always bound to a fallback" treatment for the same reason -- see bindPbrDefaults.
+    // layout. Despite the name this now also covers noisetex and the shadow-map names, neither
+    // of which is PBR data, but both need the same "always bound to a fallback" treatment for
+    // the same reason -- see bindPbrDefaults.
     private static final BindGroupLayout RETINA_PBR_SAMPLERS = BindGroupLayout.builder()
         .withSampler("normals")
         .withSampler("specular")
         .withSampler("noisetex")
+        .withSampler("shadowtex0")
+        .withSampler("shadowtex1")
+        .withSampler("shadow")
+        .withSampler("shadowcolor0")
+        .withSampler("shadowcolor1")
         .build();
     private static final ShaderRuntime INSTANCE = new ShaderRuntime();
 
@@ -136,7 +148,7 @@ public final class ShaderRuntime {
         }
     }
 
-    private record ShadowView(Matrix4f projection, Matrix4f modelView) {
+    private record ShadowView(Matrix4f projection, Matrix4f modelView, Vector3f eye) {
     }
 
     /** Original main-target attachments retained while LevelRenderer writes the Retina scene. */
@@ -145,12 +157,8 @@ public final class ShaderRuntime {
     }
 
     private static final class TerrainInvocation {
-        ChunkRenderMatrices matrices;
         CameraTransform camera;
-        FogParameters fog;
         GpuSampler sampler;
-        final Map<PreparedTerrainPack.PassKind, TerrainRenderPass> passes =
-            new EnumMap<>(PreparedTerrainPack.PassKind.class);
     }
 
     /** Mutable command state mirrored from the narrow vanilla entity ABI. */
@@ -212,6 +220,8 @@ public final class ShaderRuntime {
     private GpuTextureView flatSpecularView;
     private GpuTexture flatNoiseTexture;
     private GpuTextureView flatNoiseView;
+    private GpuTexture flatShadowTexture;
+    private GpuTextureView flatShadowView;
 
     /**
      * Whether any pack is active that needs vanilla draw state mirrored.
@@ -1046,7 +1056,10 @@ public final class ShaderRuntime {
     }
 
     /**
-     * Binds the flat fallback for {@code normals}, {@code specular}, and {@code noisetex}.
+     * Binds the flat fallback for {@code normals}, {@code specular}, and {@code noisetex}, plus
+     * either the active pack's real shadow-map data or a flat "no shadow" fallback for
+     * {@code shadowtex0}/{@code shadowtex1}/{@code shadow}/{@code shadowcolor0}/
+     * {@code shadowcolor1}.
      *
      * <p>Callers that know their pipeline declares {@link #RETINA_PBR_SAMPLERS} unconditionally
      * -- terrain and the post chain -- call this directly. {@link #bindScenePbrDefaults} is the
@@ -1057,6 +1070,51 @@ public final class ShaderRuntime {
         pass.bindTexture("normals", flatNormalsView, flatPbrSampler);
         pass.bindTexture("specular", flatSpecularView, flatPbrSampler);
         pass.bindTexture("noisetex", flatNoiseView, flatPbrSampler);
+        ActivePack current = active;
+        ShadowFramebuffer shadow = current == null ? null : current.shadowFramebuffer();
+        if (shadow == null || shadowRendering) {
+            // No shadow.vsh/shadow.fsh this pack, or this draw is itself currently writing the
+            // shadow framebuffer's own attachments (the terrain shadow pass, or entity shadow
+            // replay -- both set shadowRendering around their draw for exactly this check).
+            // Binding the real views here too would bind the same attachment both as a render
+            // target and as a sampled descriptor in the same pass -- the same same-pass hazard
+            // depthtex0 has in every other gbuffer program, and the reason TerrainPackCompiler
+            // already refuses the shadow program's own GLSL from declaring these names at all.
+            // 1.0 in every channel reads as "not in shadow" for a depth-style read under
+            // Minecraft's reversed-Z convention (a stored depth of 1.0 is at least as near the
+            // light as any real fragment) and as plain opaque white -- no tint -- for a
+            // shadowcolor-style read.
+            pass.bindTexture("shadowtex0", flatShadowView, flatPbrSampler);
+            pass.bindTexture("shadowtex1", flatShadowView, flatPbrSampler);
+            pass.bindTexture("shadow", flatShadowView, flatPbrSampler);
+            pass.bindTexture("shadowcolor0", flatShadowView, flatPbrSampler);
+            pass.bindTexture("shadowcolor1", flatShadowView, flatPbrSampler);
+            return;
+        }
+        // Non-comparison samplers unconditionally: unlike executePost, gbuffer-stage program
+        // records (Program/EntityProgram/ParticleProgram/WeatherProgram) carry no per-sampler
+        // type map for this method to consult, so there is no way to tell a pack's plain
+        // `shadowtex0` apart from a hypothetical `sampler2DShadow shadowtex0` here the way
+        // PostProgram's own samplerTypes() lets executePost do for the post chain. A plain
+        // texture() read in the pack's own GLSL still gets the real depth value either way;
+        // only automatic hardware PCF-on-compare is unavailable from a gbuffer-stage program.
+        GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        pass.bindTexture("shadowtex0", shadow.depthView(), depthSampler);
+        pass.bindTexture("shadowtex1", shadow.depthView(), depthSampler);
+        pass.bindTexture("shadow", shadow.depthView(), depthSampler);
+        bindShadowColorOrFlat(pass, "shadowcolor0", shadow, 0);
+        bindShadowColorOrFlat(pass, "shadowcolor1", shadow, 1);
+    }
+
+    /** Binds one shadowcolor attachment, or the flat fallback if the shadow program never wrote it. */
+    private void bindShadowColorOrFlat(RenderPass pass, String name, ShadowFramebuffer shadow,
+                                       int index) {
+        if (shadow.hasColorTarget(index)) {
+            pass.bindTexture(name, shadow.colorView(index),
+                RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
+        } else {
+            pass.bindTexture(name, flatShadowView, flatPbrSampler);
+        }
     }
 
     /**
@@ -1074,6 +1132,12 @@ public final class ShaderRuntime {
      * pseudo-random values, and packs commonly threshold it for dithering, where a constant
      * produces a hard cutoff instead of a dither pattern. A generated per-pixel noise texture is
      * real follow-up work, not a compile/runtime-safety fix like this one.
+     *
+     * <p>{@code shadowtex0}/{@code shadowtex1}/{@code shadow}/{@code shadowcolor0}/
+     * {@code shadowcolor1} share one more flat texture, used by {@link #bindPbrDefaults} only
+     * when there is no real shadow-map data it can safely bind instead -- see that method for
+     * the two separate cases where that happens and why 1.0 in every channel is the safe value
+     * for either a depth-style or a colour-style read of the same fallback.
      */
     private void ensurePbrDefaults() {
         if (flatPbrSampler != null) {
@@ -1093,10 +1157,14 @@ public final class ShaderRuntime {
         GpuTexture noiseTexture = RenderSystem.getDevice().createTexture("Retina flat noisetex",
             usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
         GpuTextureView noiseView = RenderSystem.getDevice().createTextureView(noiseTexture);
+        GpuTexture shadowTexture = RenderSystem.getDevice().createTexture("Retina flat shadow",
+            usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+        GpuTextureView shadowTextureView = RenderSystem.getDevice().createTextureView(shadowTexture);
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         encoder.clearColorTexture(normalsTexture, new Vector4f(0.5f, 0.5f, 1.0f, 1.0f));
         encoder.clearColorTexture(specularTexture, new Vector4f(0.0f, 0.0f, 0.0f, 0.0f));
         encoder.clearColorTexture(noiseTexture, new Vector4f(0.5f, 0.5f, 0.5f, 0.5f));
+        encoder.clearColorTexture(shadowTexture, new Vector4f(1.0f, 1.0f, 1.0f, 1.0f));
         // Assigned only once everything above has succeeded: flatPbrSampler is the guard this
         // method checks on entry, so setting it any earlier would make a failure partway through
         // permanent -- every later call would see initialization as already done and skip it,
@@ -1107,6 +1175,8 @@ public final class ShaderRuntime {
         flatSpecularView = specularView;
         flatNoiseTexture = noiseTexture;
         flatNoiseView = noiseView;
+        flatShadowTexture = shadowTexture;
+        flatShadowView = shadowTextureView;
         flatPbrSampler = RenderSystem.getDevice().createSampler(
             AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
             FilterMode.NEAREST, FilterMode.NEAREST, 1, OptionalDouble.of(0.0));
@@ -1143,7 +1213,31 @@ public final class ShaderRuntime {
         // hook), where issuing a texture clear -- as first creation does -- is not valid; this
         // call is what makes those later calls the guaranteed no-ops they need to be.
         ensurePbrDefaults();
+        // Reset per-frame state before renderIndependentTerrainShadows below runs, not after: it
+        // sets shadowView/shadowUniforms as it records the shadow pass, and both must survive
+        // into the main scene's own terrain draw later this frame (shadow-space alignment, via
+        // prepareUniforms's lazy-init guard) and into renderShadowPass()'s entity-shadow replay
+        // (called at LevelRenderer's RETURN) -- clearing them afterward discarded that same
+        // output every frame instead. terrainInvocation is the one field kept out of this block:
+        // it still holds the previous frame's capture that renderIndependentTerrainShadows is
+        // about to read, so it is cleared separately, once that read has happened.
+        frameUniforms = null;
+        shadowUniforms = null;
+        shadowView = null;
+        prepareRendered = false;
+        shadowCompRendered = false;
+        cameraMedium = FogType.NONE;
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        if (current.shadowFramebuffer() != null) {
+            current.shadowFramebuffer().clear(encoder);
+            // Rendered here, before Sodium's own main-camera terrain draw this frame (and
+            // therefore before any gbuffer-stage program runs), so shadowtex0/shadowtex1/shadow/
+            // shadowcolor* are complete data by the time such a program samples them -- see the
+            // method's own note on the one-frame-stale inputs this still relies on and why that
+            // is not a regression back to the temporal-replay approach that was rejected.
+            renderIndependentTerrainShadows(current);
+        }
+        terrainInvocation = null;
         if (current.framebuffer() != null) {
             com.mojang.blaze3d.pipeline.RenderTarget main =
                 Minecraft.getInstance().gameRenderer.mainRenderTarget();
@@ -1151,16 +1245,6 @@ public final class ShaderRuntime {
             current.framebuffer().clearFrame(encoder);
             redirectMainColorTarget(current, main);
         }
-        if (current.shadowFramebuffer() != null) {
-            current.shadowFramebuffer().clear(encoder);
-        }
-        frameUniforms = null;
-        shadowUniforms = null;
-        terrainInvocation = null;
-        shadowView = null;
-        prepareRendered = false;
-        shadowCompRendered = false;
-        cameraMedium = FogType.NONE;
     }
 
     /**
@@ -1255,80 +1339,113 @@ public final class ShaderRuntime {
         return encoder.createRenderPass(descriptor);
     }
 
-    /** Records enough of Sodium's normal terrain invocation to repeat it from the light view. */
-    public void captureTerrainInvocation(ChunkRenderMatrices matrices, CameraTransform camera,
-                                         FogParameters fog, GpuSampler sampler,
-                                         TerrainRenderPass pass) {
+    /**
+     * Records the player's camera position and terrain sampler from Sodium's own terrain draw,
+     * for {@link #renderIndependentTerrainShadows} to use centering the next frame's shadow
+     * view -- see that method's note on why one frame of lag on these two specific values is
+     * not the same kind of staleness a full terrain-content replay would have been.
+     */
+    public void captureTerrainInvocation(CameraTransform camera, GpuSampler sampler) {
         if (shadowRendering || active == null || active.shadowFramebuffer() == null) {
             return;
         }
-        // The shared per-frame values are recorded regardless of which pass kind supplied
-        // them, so a frame where translucent is the only terrain Sodium actually drew still
-        // leaves entity-shadow replay and the shadowcomp chain (below, in renderShadowPass)
-        // with a camera/fog/sampler to work from -- only the terrain-pass entry itself is
-        // conditionally withheld.
         if (terrainInvocation == null) {
             terrainInvocation = new TerrainInvocation();
         }
-        terrainInvocation.matrices = matrices;
         terrainInvocation.camera = camera;
-        terrainInvocation.fog = fog;
         terrainInvocation.sampler = sampler;
-        if (pass.isTranslucent()) {
-            // Sodium's own TerrainRenderPass.getTarget() resolves a translucent pass to
-            // Minecraft's translucentTarget(), a target scoped to vanilla's own translucent
-            // draw within the normal frame. Retina's shadow replay runs later, in the same
-            // frame but outside that window, where translucentTarget() is null -- and
-            // DefaultChunkRenderer.render() dereferences getTarget() as a plain argument
-            // expression before Retina's render-pass redirect mixin ever runs, so there is no
-            // way to redirect this pass to the shadow framebuffer at all. Shadow maps
-            // conventionally skip translucent/water depth regardless, so the correct fix is
-            // simply not to queue it for replay.
-            return;
-        }
-        terrainInvocation.passes.put(passKind(pass), pass);
     }
 
-    /** Replays Sodium's visible terrain lists through the active shadow shader and depth map. */
+    /**
+     * Replays entity shadow casters and runs the shadowcomp chain. Terrain shadows are no
+     * longer rendered here -- see {@link #renderIndependentTerrainShadows}, called from
+     * {@link #beginWorldFrame()} instead, before the main scene draws rather than after.
+     */
     public void renderShadowPass() {
         ActivePack current = active;
         if (current == null || current.shadowFramebuffer() == null) {
             return;
         }
-        // A frame with no terrain invocation to replay -- nothing visible yet, or every
-        // visible pass was translucent-only -- still needs entity-shadow replay and the
-        // shadowcomp chain to run below; neither of those two reads terrain-invocation state,
-        // so only the terrain replay itself is conditional on it.
-        renderTerrainShadows(current);
         replayEntityShadows(current);
         renderShadowCompChain(current);
     }
 
-    private void renderTerrainShadows(ActivePack current) {
+    /**
+     * Renders the terrain shadow map at the start of the frame, before Sodium's own main-camera
+     * terrain draw, using {@link SodiumWorldRenderer#computeViewportRenderLists} for an
+     * independently-culled visibility list from the shadow camera's own frustum -- not a replay
+     * of whatever the main camera happened to draw. This is what makes shadowtex0/shadowtex1/
+     * shadow/shadowcolor* real, complete data by the time a gbuffer-stage program (terrain,
+     * entity, particle, weather) samples them later this same frame, rather than only from
+     * post-processing programs afterward.
+     *
+     * <p>The camera position and terrain sampler used here come from the <em>previous</em>
+     * frame's capture ({@link #captureTerrainInvocation}, populated during the main camera's
+     * own terrain draw) -- this frame's own capture hasn't happened yet at this point, since
+     * this runs before Sodium's main draw even starts. This is deliberately not the same kind
+     * of staleness a full terrain-content replay (temporal reuse of last frame's visible-section
+     * list) would have been: the shadow map's actual content -- which sections are visible, what
+     * geometry gets drawn -- is computed fresh this frame by the independent culling call below,
+     * with zero lag. What is up to one frame behind is only the camera position used to recentre
+     * the (typically 100+ block wide) ortho shadow volume, and which texture-filter sampler to
+     * bind for the block atlas -- both imperceptible at normal movement speeds, unlike stale
+     * visibility data, which is why that alternative was rejected in favour of this one.
+     */
+    private void renderIndependentTerrainShadows(ActivePack current) {
         TerrainInvocation invocation = terrainInvocation;
-        if (invocation == null || invocation.camera == null || invocation.fog == null
-            || invocation.sampler == null || invocation.passes.isEmpty()) {
+        if (invocation == null || invocation.camera == null || invocation.sampler == null) {
             return;
-        }
-        if (shadowView == null) {
-            shadowView = createShadowView(current.prepared().shadowProgram(), invocation.camera);
         }
         SodiumWorldRenderer renderer = SodiumWorldRenderer.instanceNullable();
         if (renderer == null) {
             return;
         }
+        PreparedTerrainPack.ShadowProgram program = current.prepared().shadowProgram();
+        // Unconditional, not lazily-guarded like prepareUniforms's own copy of this pattern:
+        // the main scene's RetinaUniforms.shadowProjection/shadowModelView must reference the
+        // exact transform actually used to render the shadow map this frame, or shadow-space
+        // lookups in gbuffer programs would be misaligned with the shadow map's real content.
+        // Setting it here first, before any other terrain draw this frame can lazily set it,
+        // guarantees that.
+        shadowView = createShadowView(program, invocation.camera);
+        Matrix4f viewProjection = new Matrix4f(shadowView.projection()).mul(shadowView.modelView());
+        Viewport viewport = new Viewport(new SimpleFrustum(new FrustumIntersection(viewProjection)),
+            new Vector3d(shadowView.eye().x, shadowView.eye().y, shadowView.eye().z));
+        // The largest extent the ortho frustum can accept from the eye in any direction (its
+        // far plane, along the light direction); generous on purpose so this coarse distance
+        // prefilter never excludes a section the frustum test itself would still accept.
+        float searchDistance = program.distance() * 4.0f;
         shadowRendering = true;
         try {
             if (!loggedShadowPass) {
                 loggedShadowPass = true;
-                LOGGER.info("Recording terrain shadow map ({}px, {} visible layers)",
-                    current.shadowFramebuffer().size(), invocation.passes.size());
+                LOGGER.info("Recording terrain shadow map ({}px, independently culled)",
+                    current.shadowFramebuffer().size());
             }
+            SortedRenderLists shadowLists = renderer.computeViewportRenderLists(viewport,
+                searchDistance);
             ChunkRenderMatrices matrices = new ChunkRenderMatrices(shadowView.projection(),
                 shadowView.modelView());
-            for (TerrainRenderPass pass : invocation.passes.values()) {
-                renderer.renderLayer(matrices, pass, invocation.camera.x, invocation.camera.y,
-                    invocation.camera.z, invocation.fog, invocation.sampler);
+            // Shadow maps conventionally skip translucent/water depth regardless, matching the
+            // main terrain pass's own historical translucent-skip for shadow replay.
+            for (TerrainRenderPass pass : List.of(DefaultTerrainRenderPasses.SOLID,
+                DefaultTerrainRenderPasses.CUTOUT)) {
+                // Required bracketing for drawing a render list that differs from a region's own
+                // primary-camera one -- see SodiumWorldRenderer.renderLayer(..., SortedRenderLists)
+                // on the Sodium fork for why: DefaultChunkRenderer caches a MultiDrawBatch per
+                // (region, pass) with no notion of which camera filled it, so without this the
+                // main camera's own next draw of a shared region could silently reuse the shadow
+                // camera's cached batch content instead of its own. The post-draw clear lives in
+                // its own finally, scoped to this one pass, so a mid-draw exception still
+                // restores the cache instead of leaving a shadow-camera-filled batch behind for
+                // the main camera to find.
+                clearRegionBatches(shadowLists, pass);
+                try {
+                    renderer.renderLayer(matrices, pass, invocation.camera.x, invocation.camera.y,
+                        invocation.camera.z, FogParameters.NONE, invocation.sampler, shadowLists);
+                } finally {
+                    clearRegionBatches(shadowLists, pass);
+                }
             }
         } catch (RuntimeException e) {
             long failedGeneration = generation.incrementAndGet();
@@ -1338,6 +1455,13 @@ public final class ShaderRuntime {
             deactivate(failedGeneration);
         } finally {
             shadowRendering = false;
+        }
+    }
+
+    private static void clearRegionBatches(SortedRenderLists lists, TerrainRenderPass pass) {
+        var iterator = lists.iterator(false);
+        while (iterator.hasNext()) {
+            iterator.next().getRegion().clearCachedBatchFor(pass);
         }
     }
 
@@ -1354,6 +1478,11 @@ public final class ShaderRuntime {
         descriptor.withDepthAttachment(current.shadowFramebuffer().depthView(), OptionalDouble.empty());
         int size = current.shadowFramebuffer().size();
         descriptor.withRenderArea(new RenderPass.RenderArea(0, 0, size, size));
+        // Marks this as a shadow-framebuffer-writing pass for bindPbrDefaults below, the same
+        // flag renderIndependentTerrainShadows sets around its own terrain draw into the same
+        // attachments: without it, bindPbrDefaults would bind shadowtex0/shadowcolor0/etc. to
+        // the exact views this same pass is currently writing as its depth/colour attachments.
+        shadowRendering = true;
         try (RenderPass pass = encoder.createRenderPass(descriptor)) {
             pass.setPipeline(current.entityShadowPipeline());
             pass.setUniform("RetinaUniforms", shadowUniforms);
@@ -1377,6 +1506,8 @@ public final class ShaderRuntime {
                 loggedEntityShadows = true;
                 LOGGER.info("Recorded {} standard entity/block-entity shadow draws", entityShadowDraws.size());
             }
+        } finally {
+            shadowRendering = false;
         }
     }
 
@@ -1638,7 +1769,7 @@ public final class ShaderRuntime {
         // convention so the shared Sodium draw path can keep GREATER depth tests.
         Matrix4f projection = new Matrix4f().setOrtho(-distance, distance, -distance, distance,
             distance * 4.0f, 0.05f, true);
-        return new ShadowView(projection, modelView);
+        return new ShadowView(projection, modelView, eye);
     }
 
     /** Writes and returns the current terrain UBO slice, or null while shaders are off. */

@@ -58,10 +58,7 @@ public abstract class DefaultChunkRendererMixin {
                                             @Local(argsOnly = true) ChunkRenderMatrices matrices,
                                             @Local(argsOnly = true) CameraTransform camera,
                                             @Local(argsOnly = true) FogParameters fog,
-                                            @Local(argsOnly = true) GpuSampler sampler,
-                                            @Local(argsOnly = true)
-                                            net.caffeinemc.mods.sodium.client.render.chunk
-                                                .terrain.TerrainRenderPass terrainPass) {
+                                            @Local(argsOnly = true) GpuSampler sampler) {
         original.call(pass, name, value);
         GpuBufferSlice retina = ShaderRuntime.get().prepareUniforms(matrices, camera, fog);
         if (retina != null) {
@@ -71,6 +68,6 @@ public abstract class DefaultChunkRendererMixin {
             // path in RenderPassMixin, there is no non-Retina pipeline this could be bound onto.
             ShaderRuntime.get().bindPbrDefaults(pass);
         }
-        ShaderRuntime.get().captureTerrainInvocation(matrices, camera, fog, sampler, terrainPass);
+        ShaderRuntime.get().captureTerrainInvocation(camera, sampler);
     }
 }
