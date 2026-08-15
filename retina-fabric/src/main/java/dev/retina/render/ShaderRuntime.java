@@ -83,13 +83,14 @@ public final class ShaderRuntime {
         .withSampler("SceneDepth")
         .build();
     // Present on every gbuffer/shadow pipeline unconditionally, like the reserved-but-unused
-    // scene sampler slots BindingLayout already gives normals/specular in retina-core: a pack
-    // that never reads them pays nothing, and one that does never needs a partially-wired
-    // pipeline layout. No resource pack ships _n/_s data for most blocks, so the common case is
-    // this binding, not a pack-authored texture -- see bindPbrDefaults.
+    // scene sampler slots BindingLayout already gives these names in retina-core: a pack that
+    // never reads them pays nothing, and one that does never needs a partially-wired pipeline
+    // layout. Despite the name this now also covers noisetex, which isn't PBR data but needs the
+    // same "always bound to a fallback" treatment for the same reason -- see bindPbrDefaults.
     private static final BindGroupLayout RETINA_PBR_SAMPLERS = BindGroupLayout.builder()
         .withSampler("normals")
         .withSampler("specular")
+        .withSampler("noisetex")
         .build();
     private static final ShaderRuntime INSTANCE = new ShaderRuntime();
 
@@ -209,6 +210,8 @@ public final class ShaderRuntime {
     private GpuTextureView flatNormalsView;
     private GpuTexture flatSpecularTexture;
     private GpuTextureView flatSpecularView;
+    private GpuTexture flatNoiseTexture;
+    private GpuTextureView flatNoiseView;
 
     /**
      * Whether any pack is active that needs vanilla draw state mirrored.
@@ -1043,7 +1046,7 @@ public final class ShaderRuntime {
     }
 
     /**
-     * Binds the flat "no PBR data" fallback for {@code normals} and {@code specular}.
+     * Binds the flat fallback for {@code normals}, {@code specular}, and {@code noisetex}.
      *
      * <p>Callers that know their pipeline declares {@link #RETINA_PBR_SAMPLERS} unconditionally
      * -- terrain and the post chain -- call this directly. {@link #bindScenePbrDefaults} is the
@@ -1053,6 +1056,7 @@ public final class ShaderRuntime {
         ensurePbrDefaults();
         pass.bindTexture("normals", flatNormalsView, flatPbrSampler);
         pass.bindTexture("specular", flatSpecularView, flatPbrSampler);
+        pass.bindTexture("noisetex", flatNoiseView, flatPbrSampler);
     }
 
     /**
@@ -1063,6 +1067,13 @@ public final class ShaderRuntime {
      * alpha 1.0 for "no parallax offset"; specular all-zero reads as fully rough, non-metallic,
      * no porosity/subsurface and non-emissive under either spec. Real per-texture sourcing from
      * a resource pack's own _n/_s files is not implemented yet -- see the README boundary note.
+     *
+     * <p>{@code noisetex} gets the same one-pixel treatment for the same reason (a pack declaring
+     * it must not be refused or left with an unbound descriptor), but a single flat value is a
+     * much rougher stand-in here: real noisetex is a tileable texture of spatially varying
+     * pseudo-random values, and packs commonly threshold it for dithering, where a constant
+     * produces a hard cutoff instead of a dither pattern. A generated per-pixel noise texture is
+     * real follow-up work, not a compile/runtime-safety fix like this one.
      */
     private void ensurePbrDefaults() {
         if (flatPbrSampler != null) {
@@ -1079,9 +1090,13 @@ public final class ShaderRuntime {
         GpuTexture specularTexture = RenderSystem.getDevice().createTexture("Retina flat specular",
             usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
         GpuTextureView specularView = RenderSystem.getDevice().createTextureView(specularTexture);
+        GpuTexture noiseTexture = RenderSystem.getDevice().createTexture("Retina flat noisetex",
+            usage, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+        GpuTextureView noiseView = RenderSystem.getDevice().createTextureView(noiseTexture);
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         encoder.clearColorTexture(normalsTexture, new Vector4f(0.5f, 0.5f, 1.0f, 1.0f));
         encoder.clearColorTexture(specularTexture, new Vector4f(0.0f, 0.0f, 0.0f, 0.0f));
+        encoder.clearColorTexture(noiseTexture, new Vector4f(0.5f, 0.5f, 0.5f, 0.5f));
         // Assigned only once everything above has succeeded: flatPbrSampler is the guard this
         // method checks on entry, so setting it any earlier would make a failure partway through
         // permanent -- every later call would see initialization as already done and skip it,
@@ -1090,6 +1105,8 @@ public final class ShaderRuntime {
         flatNormalsView = normalsView;
         flatSpecularTexture = specularTexture;
         flatSpecularView = specularView;
+        flatNoiseTexture = noiseTexture;
+        flatNoiseView = noiseView;
         flatPbrSampler = RenderSystem.getDevice().createSampler(
             AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
             FilterMode.NEAREST, FilterMode.NEAREST, 1, OptionalDouble.of(0.0));
@@ -1565,12 +1582,29 @@ public final class ShaderRuntime {
                     int index = Integer.parseInt(sampler.substring("shadowcolor".length()));
                     renderPass.bindTexture(sampler, current.shadowFramebuffer().colorView(index),
                         RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
-                } else if (sampler.equals("normals") || sampler.equals("specular")) {
+                } else if (sampler.equals("normals") || sampler.equals("specular")
+                    || sampler.equals("noisetex")) {
                     // Composite/deferred stages normally re-read a colortex the pack itself
                     // wrote normals/specular data into during gbuffers, but nothing stops a
-                    // program from declaring the raw sampler directly; bind the same fallback
-                    // the gbuffer stages get rather than leaving the slot unbound.
+                    // program from declaring any of these raw samplers directly; bind the same
+                    // fallback the gbuffer stages get rather than leaving the slot unbound.
                     bindPbrDefaults(renderPass);
+                } else if (sampler.equals("depthtex0")) {
+                    // Real data, not a fallback: the main depth attachment is a complete,
+                    // finished snapshot by the time any post-processing stage runs (proven by
+                    // renderUnderwaterComposition, which already reads it the same way). NEAREST
+                    // because linear-filtered depth values are usually wrong to sample -- packs
+                    // doing depth comparisons/reconstruction expect exact texel values.
+                    com.mojang.blaze3d.pipeline.RenderTarget mainTarget =
+                        Minecraft.getInstance().gameRenderer.mainRenderTarget();
+                    GpuTextureView depthView = mainTarget.getDepthTextureView();
+                    if (depthView == null) {
+                        throw new IllegalStateException(program.sourceName()
+                            + " samples depthtex0, but the main depth attachment is not"
+                            + " available this frame");
+                    }
+                    renderPass.bindTexture(sampler, depthView,
+                        RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
                 }
             }
             renderPass.draw(3, 1, 0, 0);

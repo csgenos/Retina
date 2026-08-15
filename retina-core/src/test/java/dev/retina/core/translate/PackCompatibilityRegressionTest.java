@@ -226,20 +226,29 @@ class PackCompatibilityRegressionTest {
     }
 
     @Test
-    @DisplayName("normals and specular compile as fixed-slot scene samplers, not pack-custom ones")
+    @DisplayName("normals/specular/noisetex/depthtex0 compile as fixed-slot scene samplers, not"
+        + " pack-custom ones")
     void pbrSamplersAreFixedSceneSamplers() {
         // retina-fabric gives every gbuffer/shadow RenderPipeline a bind group named exactly
-        // "normals"/"specular" (ShaderRuntime.RETINA_PBR_SAMPLERS), unconditionally rather than
-        // per-pack. That only works if BindingLayout always recognises these two names as scene
-        // samplers -- if a pack's declaration were ever treated as a pack-custom sampler instead,
-        // it would land in SET_CUSTOM and the fabric-side bind group would not exist for it.
+        // "normals"/"specular"/"noisetex" (ShaderRuntime.RETINA_PBR_SAMPLERS), unconditionally
+        // rather than per-pack, and the post chain additionally binds real data to "depthtex0".
+        // That only works if BindingLayout always recognises these names as scene samplers -- if
+        // a pack's declaration were ever treated as a pack-custom sampler instead, it would land
+        // in SET_CUSTOM and the fabric-side bind group would not exist for it. Retina-fabric had
+        // two separate, now-fixed bugs where this core-level contract held but a fabric-side
+        // compile-time allowlist had not been updated to match it; this list must stay in sync
+        // with both TerrainPackCompiler.BOUND_RESOURCES and .POST_EXTRA_RESOURCES.
+        List<String> names = List.of("normals", "specular", "noisetex", "depthtex0");
         String fragment = """
             #version 120
             uniform sampler2D normals;
             uniform sampler2D specular;
+            uniform sampler2D noisetex;
+            uniform sampler2D depthtex0;
             varying vec2 texcoord;
             void main() {
-                gl_FragColor = texture2D(normals, texcoord) + texture2D(specular, texcoord);
+                gl_FragColor = texture2D(normals, texcoord) + texture2D(specular, texcoord)
+                    + texture2D(noisetex, texcoord) + texture2D(depthtex0, texcoord);
             }
             """;
         BindingLayout layout = new BindingLayout();
@@ -250,14 +259,14 @@ class PackCompatibilityRegressionTest {
                     ShaderStage.FRAGMENT)).layout()));
         compile(translated, ShaderStage.FRAGMENT);
 
-        for (String name : List.of("normals", "specular")) {
+        for (String name : names) {
             BindingLayout.Binding binding = layout.sceneSampler(name)
                 .orElseThrow(() -> new AssertionError(
                     name + " was not recognised as a fixed scene sampler"));
             assertEquals(BindingLayout.Binding.Role.SCENE_SAMPLER, binding.role());
         }
         assertTrue(layout.usedBindings().stream().map(BindingLayout.Binding::name)
-                .toList().containsAll(List.of("normals", "specular")),
+                .toList().containsAll(names),
             "a declared sampler must appear in usedBindings for the pipeline layout to include it");
     }
 
