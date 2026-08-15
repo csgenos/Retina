@@ -1,0 +1,92 @@
+name: Release Retina
+
+# Deliberately separate from build.yml, which also runs on pull_request from forks and keeps
+# permissions: contents: read for that reason. A tag push already requires repo write access to
+# create, so granting contents: write here (needed to publish a release) is scoped to exactly the
+# trigger that can only come from someone who could publish one manually anyway.
+on:
+  push:
+    tags:
+      - "*.*.*+mc*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ensure the wrapper is executable
+        run: chmod +x gradlew
+
+      # The tag is the source of truth for what version gets published. Building whatever
+      # gradle.properties currently says, under a tag that says something else, would publish a
+      # release whose jar filename and in-game version string both disagree with its own tag.
+      - name: Verify the tag matches the project version
+        run: |
+          expected="$(grep '^retina.version=' gradle.properties | cut -d= -f2)+mc$(grep '^retina.minecraft=' gradle.properties | cut -d= -f2)"
+          if [ "${GITHUB_REF_NAME}" != "$expected" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match the project version $expected" \
+              "computed from gradle.properties (retina.version + retina.minecraft). Update" \
+              "gradle.properties, commit, then re-tag with a tag matching the new version exactly."
+            exit 1
+          fi
+
+      - name: Build and verify release JAR
+        run: ./gradlew :retina-fabric:build --no-daemon
+
+      # Reuses the CHANGELOG.md section for this version as the release body, same as the manual
+      # step docs/PUBLISHING.md already documents. Falls back to a generic note if the tagged
+      # version has no matching "## <version>" heading yet.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk -v tag="${GITHUB_REF_NAME}" '
+            /^## / {
+              if (found) exit
+              if (index($0, tag) > 0) { found=1 }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > /tmp/changelog-section.md
+          {
+            echo "This is an early, working preview build -- not yet an Iris-comparable release."
+            echo "See README.md for current feature coverage and known boundaries."
+            echo
+            if [ -s /tmp/changelog-section.md ]; then
+              cat /tmp/changelog-section.md
+            else
+              echo "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) for what changed."
+            fi
+          } > /tmp/release-notes.md
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Not a glob: retina-*.jar would also match the -sources.jar Loom builds alongside it,
+          # which docs/PUBLISHING.md is explicit must not be uploaded. The tag was already
+          # verified to equal the project version, so the release jar's name is exactly this.
+          jar="retina-fabric/build/libs/retina-${GITHUB_REF_NAME}.jar"
+          if [ ! -f "$jar" ]; then
+            echo "::error::Expected release jar not found at $jar"
+            exit 1
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            "$jar" \
+            --title "Retina ${GITHUB_REF_NAME}" \
+            --notes-file /tmp/release-notes.md \
+            --prerelease

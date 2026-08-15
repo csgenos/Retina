@@ -43,6 +43,8 @@ Fixes from the 0.1.0 audit in `docs/AUDIT_2026-08-14.md`.
   until real per-block `_n`/`_s` texture sourcing from the active resource pack lands (tracked
   separately). This is expected to be the fix for packs, including Sildur's, that previously
   would not load at all once they referenced either sampler.
+- Pushing a version tag now publishes a GitHub release automatically, with the built jar attached
+  and the matching `CHANGELOG.md` section as the release body. See `docs/PUBLISHING.md`.
 
 ## 0.1.0+mc26.2 — prerelease
 

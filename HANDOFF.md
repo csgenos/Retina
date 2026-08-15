@@ -91,8 +91,15 @@ retina-fabric/build/libs/retina-0.1.0+mc26.2.jar
 
 `.github/workflows/build.yml` runs the release build for every pull request,
 every push to `main`, and manual dispatch. Successful runs upload the publishable
-Fabric JAR (excluding the sources JAR) as a 30-day Actions artifact. It
-intentionally does not create a GitHub release or publish to a mod platform.
+Fabric JAR (excluding the sources JAR) as a 30-day Actions artifact. It does not
+create a GitHub release or publish to a mod platform.
+
+`.github/workflows/release.yml` runs separately, only on a pushed tag matching
+`*.*.*+mc*`. It rebuilds and re-verifies the jar, refuses to continue if the tag
+does not match the version `gradle.properties` computes, and publishes a GitHub
+pre-release with the jar attached and the matching `CHANGELOG.md` section as the
+body. See `docs/PUBLISHING.md` for the full release procedure. Mod-platform
+(Modrinth/CurseForge) upload is still a manual, project-owner action.
 
 ## Supported live pack surface
 
