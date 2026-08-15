@@ -79,6 +79,11 @@ public final class ShadowFramebuffer implements AutoCloseable {
         return view;
     }
 
+    /** Whether the pack's shadow program declared a {@code shadowcolor<index>} output. */
+    public boolean hasColorTarget(int index) {
+        return colorViews.containsKey(index);
+    }
+
     public List<GpuTextureView> colorAttachments() {
         return plan.drawTargets().stream().map(colorViews::get).toList();
     }

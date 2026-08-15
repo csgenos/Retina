@@ -93,6 +93,19 @@ Fixes from the 0.1.0 audit in `docs/AUDIT_2026-08-14.md`.
   `dev`) and `retina/on-0.9.1` (against the exact release tag, for testing); `retina-fabric`'s own
   dependency has not been switched over to it yet, pending publishing the patched build somewhere
   Gradle can fetch it from.
+- Three real gaps in the reorder above, found on review before it ever shipped: `beginWorldFrame`
+  was resetting `shadowView`/`shadowUniforms` immediately after the shadow pass set them, which
+  misaligned the main scene's shadow-space lookups on any frame the camera moved and silently
+  dropped every entity shadow caster (the reset now runs before the shadow pass, not after);
+  the newly-permitted `shadowtex0`/`shadowtex1`/`shadow`/`shadowcolor0`/`shadowcolor1` names had
+  no actual pipeline binding for terrain, entity, particle, or weather programs to read, only a
+  compile-time allowlist entry, so a pack declaring one would compile and then fail at draw time
+  (`ShaderRuntime.bindPbrDefaults` now binds the real `ShadowFramebuffer` views, or a flat
+  "not in shadow" fallback where binding the real ones would alias the same attachment the
+  current draw is itself writing -- the shadow pass's own terrain draw and entity shadow replay);
+  and a mid-draw exception during the shadow pass could leave a shared region's batch cache
+  holding shadow-camera content instead of the main camera's own (the safety-bracket clear is
+  now in a `finally` scoped to each pass).
 
 ## 0.1.0+mc26.2 — prerelease
 
