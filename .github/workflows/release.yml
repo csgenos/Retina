@@ -1,0 +1,105 @@
+name: Release Retina
+
+# Deliberately separate from build.yml, which also runs on pull_request from forks and keeps
+# permissions: contents: read for that reason. A tag push already requires repo write access to
+# create, so granting contents: write here (needed to publish a release) is scoped to exactly the
+# trigger that can only come from someone who could publish one manually anyway.
+on:
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ensure the wrapper is executable
+        run: chmod +x gradlew
+
+      # The tag alone drives the release; nothing needs editing in gradle.properties first.
+      # retina.version comes from the tag directly. The Minecraft component intentionally does
+      # NOT come from the tag: it is read from minecraft.version, the one property that actually
+      # reflects what Loom compiled against and what fabric.mod.json declares as a dependency
+      # (retina-fabric/build.gradle.kts:12,97-107). A tag can't retroactively make already-committed
+      # code compatible with a different Minecraft version, so there is nothing to override here --
+      # releases always ship for whatever Minecraft version is currently committed.
+      - name: Compute the release version
+        id: version
+        run: |
+          mc="$(grep '^minecraft.version=' gradle.properties | cut -d= -f2)"
+          full="${GITHUB_REF_NAME}+mc${mc}"
+          echo "mc=$mc" >> "$GITHUB_OUTPUT"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "Releasing $full"
+
+      - name: Build and verify release JAR
+        run: |
+          ./gradlew :retina-fabric:build --no-daemon \
+            -Pretina.version="${GITHUB_REF_NAME}" \
+            -Pretina.minecraft="${{ steps.version.outputs.mc }}"
+
+      # Prefers a CHANGELOG.md section already headed with this version (someone renamed
+      # "## Unreleased" before tagging), then falls back to whatever is still under
+      # "## Unreleased" (the common case: nothing needed editing before the tag), then a generic
+      # note if neither has content.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk -v tag="${{ steps.version.outputs.full }}" '
+            /^## / {
+              if (found) exit
+              if (index($0, tag) > 0) { found=1 }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > /tmp/notes-section.md
+          if [ ! -s /tmp/notes-section.md ]; then
+            awk '
+              /^## Unreleased/ { found=1; next }
+              /^## / { if (found) exit; next }
+              found { print }
+            ' CHANGELOG.md > /tmp/notes-section.md
+          fi
+          {
+            echo "This is an early, working preview build -- not yet an Iris-comparable release."
+            echo "See README.md for current feature coverage and known boundaries."
+            echo
+            if [ -s /tmp/notes-section.md ]; then
+              cat /tmp/notes-section.md
+            else
+              echo "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) for what changed."
+            fi
+          } > /tmp/release-notes.md
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Not a glob: retina-*.jar would also match the -sources.jar Loom builds alongside it,
+          # which docs/PUBLISHING.md is explicit must not be uploaded.
+          jar="retina-fabric/build/libs/retina-${{ steps.version.outputs.full }}.jar"
+          if [ ! -f "$jar" ]; then
+            echo "::error::Expected release jar not found at $jar"
+            exit 1
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            "$jar" \
+            --title "Retina ${{ steps.version.outputs.full }}" \
+            --notes-file /tmp/release-notes.md \
+            --prerelease
