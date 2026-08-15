@@ -7,28 +7,37 @@ interface.
 
 ## Cutting a GitHub release
 
-1. Update `gradle.properties` (`retina.version` and/or `retina.minecraft`) and `CHANGELOG.md` --
-   rename `## Unreleased` to a version heading containing the new version string, e.g.
-   `## 0.2.0+mc26.2`. Commit this on `main` first; the release workflow reads both files as they
-   stand at the tagged commit.
-2. Tag that commit with the version string exactly as it appears in `gradle.properties`:
-   `retina.version` + `+mc` + `retina.minecraft`, e.g. `0.2.0+mc26.2` (no `v` prefix -- this
-   matches the jar filename and the in-game version string, not a separate convention).
-   ```
-   git tag 0.2.0+mc26.2
-   git push origin 0.2.0+mc26.2
-   ```
-3. `.github/workflows/release.yml` builds `:retina-fabric:build` (running the same
-   `verifyReleaseJar` check as any other build), refuses to continue if the tag does not match the
-   version computed from `gradle.properties`, and publishes a GitHub **pre-release** with the jar
-   attached and the matching `CHANGELOG.md` section as the release body.
-4. The release appears at `https://github.com/<owner>/<repo>/releases/tag/<tag>`. Download the jar
-   from there for the Modrinth/CurseForge steps below -- do not rebuild locally, the published jar
-   is already the exact tagged, verified artifact.
+Nothing needs editing first. Pick the next semantic version and tag `main`'s current tip with it
+-- plain `major.minor.patch`, no `v` prefix, no `+mc...` suffix (the workflow adds that part):
 
-If step 1 is skipped -- the tag has no matching `## <version>` heading in `CHANGELOG.md` yet -- the
-release still publishes, just with a generic note pointing at `CHANGELOG.md` instead of the real
-section.
+```
+git tag 0.2.0
+git push origin 0.2.0
+```
+
+`.github/workflows/release.yml` takes it from there:
+
+1. Reads `minecraft.version` from `gradle.properties` as-committed -- the property that actually
+   controls what Loom compiled against and what `fabric.mod.json` declares as a dependency -- and
+   combines it with the tag to get the full version, e.g. `0.2.0+mc26.2`. This is deliberately not
+   configurable from the tag: a tag can't retroactively make already-committed code compatible
+   with a different Minecraft version, so a release always ships for whatever is currently
+   committed.
+2. Builds `:retina-fabric:build` with that version substituted in (running the same
+   `verifyReleaseJar` check as any other build), regardless of what `gradle.properties`'s own
+   `retina.version`/`retina.minecraft` currently say.
+3. Publishes a GitHub **pre-release** for the tag, with the jar attached, titled with the full
+   version string.
+4. For the release body: uses the `CHANGELOG.md` section already headed with the full version
+   string if one exists (i.e. you renamed `## Unreleased` to `## 0.2.0+mc26.2` before tagging),
+   otherwise falls back to whatever is currently under `## Unreleased`, otherwise a generic note
+   pointing at `CHANGELOG.md`. Renaming `## Unreleased` before tagging isn't required, just gets
+   you a release body scoped to this version specifically rather than everything accumulated
+   since the last one.
+
+The release appears at `https://github.com/<owner>/<repo>/releases/tag/<tag>`. Download the jar
+from there for the Modrinth/CurseForge steps below -- do not rebuild locally, the published jar is
+already the exact tagged, verified artifact.
 
 ## Continuous build artifacts
 

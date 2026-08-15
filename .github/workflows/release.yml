@@ -7,7 +7,7 @@ name: Release Retina
 on:
   push:
     tags:
-      - "*.*.*+mc*"
+      - "[0-9]*.[0-9]*.[0-9]*"
 
 permissions:
   contents: write
@@ -33,56 +33,55 @@ jobs:
       - name: Ensure the wrapper is executable
         run: chmod +x gradlew
 
-      # The tag is the source of truth for what version gets published. Building whatever
-      # gradle.properties currently says, under a tag that says something else, would publish a
-      # release whose jar filename and in-game version string both disagree with its own tag.
-      - name: Verify the tag matches the project version
+      # The tag alone drives the release; nothing needs editing in gradle.properties first.
+      # retina.version comes from the tag directly. The Minecraft component intentionally does
+      # NOT come from the tag: it is read from minecraft.version, the one property that actually
+      # reflects what Loom compiled against and what fabric.mod.json declares as a dependency
+      # (retina-fabric/build.gradle.kts:12,97-107). A tag can't retroactively make already-committed
+      # code compatible with a different Minecraft version, so there is nothing to override here --
+      # releases always ship for whatever Minecraft version is currently committed.
+      - name: Compute the release version
+        id: version
         run: |
-          retina_minecraft="$(grep '^retina.minecraft=' gradle.properties | cut -d= -f2)"
-          expected="$(grep '^retina.version=' gradle.properties | cut -d= -f2)+mc$retina_minecraft"
-          if [ "${GITHUB_REF_NAME}" != "$expected" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match the project version $expected" \
-              "computed from gradle.properties (retina.version + retina.minecraft). Update" \
-              "gradle.properties, commit, then re-tag with a tag matching the new version exactly."
-            exit 1
-          fi
-          # retina.minecraft (the version string retina-fabric/build.gradle.kts's version key
-          # uses, checked above) and minecraft.version (what it actually gives Loom to compile
-          # against and bakes into fabric.mod.json, retina-fabric/build.gradle.kts:12,97-107) are
-          # two separate properties with no enforced relationship. Bumping one without the other
-          # would publish a jar under a tag naming a Minecraft version it was neither built for
-          # nor declares as its dependency.
-          fabric_minecraft="$(grep '^minecraft.version=' gradle.properties | cut -d= -f2)"
-          if [ "$retina_minecraft" != "$fabric_minecraft" ]; then
-            echo "::error::gradle.properties has retina.minecraft=$retina_minecraft but" \
-              "minecraft.version=$fabric_minecraft. These must match: retina.minecraft names the" \
-              "version in the tag/jar filename, minecraft.version is what Loom actually compiles" \
-              "against and declares in fabric.mod.json. Update both together, commit, then re-tag."
-            exit 1
-          fi
+          mc="$(grep '^minecraft.version=' gradle.properties | cut -d= -f2)"
+          full="${GITHUB_REF_NAME}+mc${mc}"
+          echo "mc=$mc" >> "$GITHUB_OUTPUT"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "Releasing $full"
 
       - name: Build and verify release JAR
-        run: ./gradlew :retina-fabric:build --no-daemon
+        run: |
+          ./gradlew :retina-fabric:build --no-daemon \
+            -Pretina.version="${GITHUB_REF_NAME}" \
+            -Pretina.minecraft="${{ steps.version.outputs.mc }}"
 
-      # Reuses the CHANGELOG.md section for this version as the release body, same as the manual
-      # step docs/PUBLISHING.md already documents. Falls back to a generic note if the tagged
-      # version has no matching "## <version>" heading yet.
+      # Prefers a CHANGELOG.md section already headed with this version (someone renamed
+      # "## Unreleased" before tagging), then falls back to whatever is still under
+      # "## Unreleased" (the common case: nothing needed editing before the tag), then a generic
+      # note if neither has content.
       - name: Extract release notes from CHANGELOG.md
         run: |
-          awk -v tag="${GITHUB_REF_NAME}" '
+          awk -v tag="${{ steps.version.outputs.full }}" '
             /^## / {
               if (found) exit
               if (index($0, tag) > 0) { found=1 }
               next
             }
             found { print }
-          ' CHANGELOG.md > /tmp/changelog-section.md
+          ' CHANGELOG.md > /tmp/notes-section.md
+          if [ ! -s /tmp/notes-section.md ]; then
+            awk '
+              /^## Unreleased/ { found=1; next }
+              /^## / { if (found) exit; next }
+              found { print }
+            ' CHANGELOG.md > /tmp/notes-section.md
+          fi
           {
             echo "This is an early, working preview build -- not yet an Iris-comparable release."
             echo "See README.md for current feature coverage and known boundaries."
             echo
-            if [ -s /tmp/changelog-section.md ]; then
-              cat /tmp/changelog-section.md
+            if [ -s /tmp/notes-section.md ]; then
+              cat /tmp/notes-section.md
             else
               echo "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) for what changed."
             fi
@@ -93,15 +92,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Not a glob: retina-*.jar would also match the -sources.jar Loom builds alongside it,
-          # which docs/PUBLISHING.md is explicit must not be uploaded. The tag was already
-          # verified to equal the project version, so the release jar's name is exactly this.
-          jar="retina-fabric/build/libs/retina-${GITHUB_REF_NAME}.jar"
+          # which docs/PUBLISHING.md is explicit must not be uploaded.
+          jar="retina-fabric/build/libs/retina-${{ steps.version.outputs.full }}.jar"
           if [ ! -f "$jar" ]; then
             echo "::error::Expected release jar not found at $jar"
             exit 1
           fi
           gh release create "${GITHUB_REF_NAME}" \
             "$jar" \
-            --title "Retina ${GITHUB_REF_NAME}" \
+            --title "Retina ${{ steps.version.outputs.full }}" \
             --notes-file /tmp/release-notes.md \
             --prerelease

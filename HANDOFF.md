@@ -95,11 +95,16 @@ Fabric JAR (excluding the sources JAR) as a 30-day Actions artifact. It does not
 create a GitHub release or publish to a mod platform.
 
 `.github/workflows/release.yml` runs separately, only on a pushed tag matching
-`*.*.*+mc*`. It rebuilds and re-verifies the jar, refuses to continue if the tag
-does not match the version `gradle.properties` computes, and publishes a GitHub
-pre-release with the jar attached and the matching `CHANGELOG.md` section as the
-body. See `docs/PUBLISHING.md` for the full release procedure. Mod-platform
-(Modrinth/CurseForge) upload is still a manual, project-owner action.
+`[0-9]*.[0-9]*.[0-9]*` (e.g. `0.2.0` -- bare semver, no `+mc...` suffix, the
+workflow adds that from `minecraft.version`). Nothing needs pre-editing in
+`gradle.properties` or `CHANGELOG.md`: the tag supplies `retina.version` as a
+Gradle property override at build time, `minecraft.version` as committed
+supplies the Minecraft component (never taken from the tag, since a tag can't
+retroactively make committed code compatible with a different Minecraft
+version), and the release body prefers a matching `CHANGELOG.md` section but
+falls back to `## Unreleased`. See `docs/PUBLISHING.md` for the full release
+procedure. Mod-platform (Modrinth/CurseForge) upload is still a manual,
+project-owner action.
 
 ## Supported live pack surface
 
