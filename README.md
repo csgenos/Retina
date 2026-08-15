@@ -133,6 +133,14 @@ lighting; it proves renderer stages rather than visual polish.
   same stage is still writing the depth attachment it would read is not implemented.
   `depthtex1`/`depthtex2` (opaque-only and no-handheld-item depth in the OptiFine convention) and
   reading `colortex*` as an input from a gbuffer stage are not implemented at all yet.
+- `shadowtex0`, `shadowtex1`, `shadow`, and `shadowcolor0`/`shadowcolor1` are likewise readable
+  only from prepare/deferred/composite/final/shadowcomp programs, never from terrain, entity,
+  particle, weather, or `shadow` programs themselves. Retina generates the shadow map by replaying
+  the main camera's already-visible terrain list from the light's view *after* the whole main
+  scene renders, not before it as the OptiFine/Iris convention assumes, so a gbuffer-stage program
+  has no shadow map to read yet. Packs that sample the shadow map directly in a gbuffer program --
+  a common technique for cheap sun/moon shadowing -- cannot load until this is reordered, which
+  needs independent shadow-frustum culling Retina does not have yet; tracked in #22.
 - A debug overlay and a parallel shader-compilation pool are both wanted and neither exists.
   Sodium's **Renderer** page therefore lists only the profile selector.
 
