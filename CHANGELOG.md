@@ -55,6 +55,17 @@ Fixes from the 0.1.0 audit in `docs/AUDIT_2026-08-14.md`.
   `depthtex0` now binds the real main scene depth, but only in post-processing pipelines, where
   it is a complete finished snapshot by the time any program reads it. `depthtex1`/`depthtex2`
   and `colortex*` as a gbuffer-stage input remain refused; see the README boundary notes.
+- Investigated the next live refusal (`gbuffers_textured` declaring `shadowtex0`, again against
+  Sildur's): unlike the previous three, this one is not a missing allowlist entry. Retina
+  generates the shadow map by replaying the main scene's already-visible terrain from the light's
+  view *after* the whole main scene renders (`LevelRendererMixin` calls `renderShadowPass()` at
+  `LevelRenderer.render`'s `RETURN`, not its `HEAD`), so `shadowtex0`/`shadowtex1`/`shadow`/
+  `shadowcolor0`/`shadowcolor1` genuinely have no data yet at any gbuffer stage; the refusal was
+  already correct. Sampling the shadow map straight from a gbuffer program is a common pack
+  technique that needs the shadow pass reordered ahead of the main scene, which needs independent
+  shadow-frustum culling Retina does not have -- real follow-up work, tracked in #22, not a patch.
+  The refusal message now explains this (and the equivalent reasons for `depthtex1`/`depthtex2`
+  and `colortex*`) instead of repeating the same generic "cannot bind yet" text for every name.
 - Pushing a bare version tag (e.g. `0.2.0`) now publishes a GitHub release automatically, with the
   built jar attached and a `CHANGELOG.md` section as the release body. Nothing needs pre-editing:
   the tag supplies the version and the Minecraft component always comes from the committed

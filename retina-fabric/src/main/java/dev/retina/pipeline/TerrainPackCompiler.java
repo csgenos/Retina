@@ -924,10 +924,50 @@ public final class TerrainPackCompiler {
                 if (!BOUND_RESOURCES.contains(resource)) {
                     throw new CompilationException(name + " uses resource '" + resource
                         + "' (" + binding.glslType() + "), which the Sodium terrain pass"
-                        + " cannot bind yet");
+                        + " cannot bind yet" + unboundReason(name, resource));
                 }
             }
         }
+    }
+
+    /**
+     * A specific reason for a name {@link BindingLayout} recognises but this gbuffer-stage gate
+     * still refuses, so the message says whether a refusal is a missing allowlist entry (which
+     * would be a bug -- see the audit note on {@link #BOUND_RESOURCES}) or a real architecture
+     * gap. Keep in sync with what {@code postSamplers} allows and {@code ShaderRuntime.executePost}
+     * actually binds: everything named here is a name that gate allows and this one does not,
+     * on purpose. Unrecognised, pack-custom resource names fall through to no reason at all.
+     *
+     * <p>{@code program} matters for {@code depthtex0}: every other caller of this gate (terrain,
+     * entities, particles, weather) runs while Minecraft's normal world render pass is still
+     * writing that exact attachment, but {@code shadow} is replayed separately, after that pass
+     * has already returned (see {@code LevelRendererMixin}), into its own depth attachment --
+     * the "still being written" hazard does not apply to it, so it needs its own explanation.
+     */
+    private static String unboundReason(String program, String resource) {
+        if (resource.matches("shadowtex[01]|shadow|shadowcolor[01]")) {
+            return ": Retina renders the shadow map after the main scene, not before it as the"
+                + " OptiFine/Iris convention assumes, so it has no data yet at this stage; only"
+                + " prepare/deferred/composite/final/shadowcomp programs can read it";
+        }
+        if (resource.equals("depthtex0")) {
+            if (program.equals("shadow")) {
+                return ": the shadow program writes its own separate shadow depth attachment,"
+                    + " not this one -- the main scene's depthtex0 is actually complete by the"
+                    + " time shadow replays, but nothing binds it into the shadow pipeline yet";
+            }
+            return ": this stage is still writing the depth attachment depthtex0 would read;"
+                + " only post-processing programs can read it";
+        }
+        if (resource.matches("depthtex[12]")) {
+            return ": a separate opaque-only/no-handheld-item depth snapshot is not captured"
+                + " anywhere yet";
+        }
+        if (resource.matches("colortex(?:[0-9]|1[0-5])")) {
+            return ": reading a colortex target as an input during a gbuffer stage is not"
+                + " implemented yet";
+        }
+        return "";
     }
 
     private static void validate(SpirvCompiler compiler, String name, String source,
