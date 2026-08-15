@@ -38,17 +38,23 @@ import dev.retina.pipeline.TerrainPackCompiler;
 import dev.retina.vk.VulkanBackend;
 import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.render.chunk.ShaderChunkRenderer;
+import net.caffeinemc.mods.sodium.client.render.chunk.lists.SortedRenderLists;
+import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
+import net.caffeinemc.mods.sodium.client.render.viewport.Viewport;
+import net.caffeinemc.mods.sodium.client.render.viewport.frustum.SimpleFrustum;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.DynamicUniformStorage;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.material.FogType;
+import org.joml.FrustumIntersection;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.slf4j.Logger;
@@ -136,7 +142,7 @@ public final class ShaderRuntime {
         }
     }
 
-    private record ShadowView(Matrix4f projection, Matrix4f modelView) {
+    private record ShadowView(Matrix4f projection, Matrix4f modelView, Vector3f eye) {
     }
 
     /** Original main-target attachments retained while LevelRenderer writes the Retina scene. */
@@ -145,12 +151,8 @@ public final class ShaderRuntime {
     }
 
     private static final class TerrainInvocation {
-        ChunkRenderMatrices matrices;
         CameraTransform camera;
-        FogParameters fog;
         GpuSampler sampler;
-        final Map<PreparedTerrainPack.PassKind, TerrainRenderPass> passes =
-            new EnumMap<>(PreparedTerrainPack.PassKind.class);
     }
 
     /** Mutable command state mirrored from the narrow vanilla entity ABI. */
@@ -1144,15 +1146,21 @@ public final class ShaderRuntime {
         // call is what makes those later calls the guaranteed no-ops they need to be.
         ensurePbrDefaults();
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        if (current.shadowFramebuffer() != null) {
+            current.shadowFramebuffer().clear(encoder);
+            // Rendered here, before Sodium's own main-camera terrain draw this frame (and
+            // therefore before any gbuffer-stage program runs), so shadowtex0/shadowtex1/shadow/
+            // shadowcolor* are complete data by the time such a program samples them -- see the
+            // method's own note on the one-frame-stale inputs this still relies on and why that
+            // is not a regression back to the temporal-replay approach that was rejected.
+            renderIndependentTerrainShadows(current);
+        }
         if (current.framebuffer() != null) {
             com.mojang.blaze3d.pipeline.RenderTarget main =
                 Minecraft.getInstance().gameRenderer.mainRenderTarget();
             current.framebuffer().resize(main.width, main.height);
             current.framebuffer().clearFrame(encoder);
             redirectMainColorTarget(current, main);
-        }
-        if (current.shadowFramebuffer() != null) {
-            current.shadowFramebuffer().clear(encoder);
         }
         frameUniforms = null;
         shadowUniforms = null;
@@ -1255,80 +1263,107 @@ public final class ShaderRuntime {
         return encoder.createRenderPass(descriptor);
     }
 
-    /** Records enough of Sodium's normal terrain invocation to repeat it from the light view. */
-    public void captureTerrainInvocation(ChunkRenderMatrices matrices, CameraTransform camera,
-                                         FogParameters fog, GpuSampler sampler,
-                                         TerrainRenderPass pass) {
+    /**
+     * Records the player's camera position and terrain sampler from Sodium's own terrain draw,
+     * for {@link #renderIndependentTerrainShadows} to use centering the next frame's shadow
+     * view -- see that method's note on why one frame of lag on these two specific values is
+     * not the same kind of staleness a full terrain-content replay would have been.
+     */
+    public void captureTerrainInvocation(CameraTransform camera, GpuSampler sampler) {
         if (shadowRendering || active == null || active.shadowFramebuffer() == null) {
             return;
         }
-        // The shared per-frame values are recorded regardless of which pass kind supplied
-        // them, so a frame where translucent is the only terrain Sodium actually drew still
-        // leaves entity-shadow replay and the shadowcomp chain (below, in renderShadowPass)
-        // with a camera/fog/sampler to work from -- only the terrain-pass entry itself is
-        // conditionally withheld.
         if (terrainInvocation == null) {
             terrainInvocation = new TerrainInvocation();
         }
-        terrainInvocation.matrices = matrices;
         terrainInvocation.camera = camera;
-        terrainInvocation.fog = fog;
         terrainInvocation.sampler = sampler;
-        if (pass.isTranslucent()) {
-            // Sodium's own TerrainRenderPass.getTarget() resolves a translucent pass to
-            // Minecraft's translucentTarget(), a target scoped to vanilla's own translucent
-            // draw within the normal frame. Retina's shadow replay runs later, in the same
-            // frame but outside that window, where translucentTarget() is null -- and
-            // DefaultChunkRenderer.render() dereferences getTarget() as a plain argument
-            // expression before Retina's render-pass redirect mixin ever runs, so there is no
-            // way to redirect this pass to the shadow framebuffer at all. Shadow maps
-            // conventionally skip translucent/water depth regardless, so the correct fix is
-            // simply not to queue it for replay.
-            return;
-        }
-        terrainInvocation.passes.put(passKind(pass), pass);
     }
 
-    /** Replays Sodium's visible terrain lists through the active shadow shader and depth map. */
+    /**
+     * Replays entity shadow casters and runs the shadowcomp chain. Terrain shadows are no
+     * longer rendered here -- see {@link #renderIndependentTerrainShadows}, called from
+     * {@link #beginWorldFrame()} instead, before the main scene draws rather than after.
+     */
     public void renderShadowPass() {
         ActivePack current = active;
         if (current == null || current.shadowFramebuffer() == null) {
             return;
         }
-        // A frame with no terrain invocation to replay -- nothing visible yet, or every
-        // visible pass was translucent-only -- still needs entity-shadow replay and the
-        // shadowcomp chain to run below; neither of those two reads terrain-invocation state,
-        // so only the terrain replay itself is conditional on it.
-        renderTerrainShadows(current);
         replayEntityShadows(current);
         renderShadowCompChain(current);
     }
 
-    private void renderTerrainShadows(ActivePack current) {
+    /**
+     * Renders the terrain shadow map at the start of the frame, before Sodium's own main-camera
+     * terrain draw, using {@link SodiumWorldRenderer#computeViewportRenderLists} for an
+     * independently-culled visibility list from the shadow camera's own frustum -- not a replay
+     * of whatever the main camera happened to draw. This is what makes shadowtex0/shadowtex1/
+     * shadow/shadowcolor* real, complete data by the time a gbuffer-stage program (terrain,
+     * entity, particle, weather) samples them later this same frame, rather than only from
+     * post-processing programs afterward.
+     *
+     * <p>The camera position and terrain sampler used here come from the <em>previous</em>
+     * frame's capture ({@link #captureTerrainInvocation}, populated during the main camera's
+     * own terrain draw) -- this frame's own capture hasn't happened yet at this point, since
+     * this runs before Sodium's main draw even starts. This is deliberately not the same kind
+     * of staleness a full terrain-content replay (temporal reuse of last frame's visible-section
+     * list) would have been: the shadow map's actual content -- which sections are visible, what
+     * geometry gets drawn -- is computed fresh this frame by the independent culling call below,
+     * with zero lag. What is up to one frame behind is only the camera position used to recentre
+     * the (typically 100+ block wide) ortho shadow volume, and which texture-filter sampler to
+     * bind for the block atlas -- both imperceptible at normal movement speeds, unlike stale
+     * visibility data, which is why that alternative was rejected in favour of this one.
+     */
+    private void renderIndependentTerrainShadows(ActivePack current) {
         TerrainInvocation invocation = terrainInvocation;
-        if (invocation == null || invocation.camera == null || invocation.fog == null
-            || invocation.sampler == null || invocation.passes.isEmpty()) {
+        if (invocation == null || invocation.camera == null || invocation.sampler == null) {
             return;
-        }
-        if (shadowView == null) {
-            shadowView = createShadowView(current.prepared().shadowProgram(), invocation.camera);
         }
         SodiumWorldRenderer renderer = SodiumWorldRenderer.instanceNullable();
         if (renderer == null) {
             return;
         }
+        PreparedTerrainPack.ShadowProgram program = current.prepared().shadowProgram();
+        // Unconditional, not lazily-guarded like prepareUniforms's own copy of this pattern:
+        // the main scene's RetinaUniforms.shadowProjection/shadowModelView must reference the
+        // exact transform actually used to render the shadow map this frame, or shadow-space
+        // lookups in gbuffer programs would be misaligned with the shadow map's real content.
+        // Setting it here first, before any other terrain draw this frame can lazily set it,
+        // guarantees that.
+        shadowView = createShadowView(program, invocation.camera);
+        Matrix4f viewProjection = new Matrix4f(shadowView.projection()).mul(shadowView.modelView());
+        Viewport viewport = new Viewport(new SimpleFrustum(new FrustumIntersection(viewProjection)),
+            new Vector3d(shadowView.eye().x, shadowView.eye().y, shadowView.eye().z));
+        // The largest extent the ortho frustum can accept from the eye in any direction (its
+        // far plane, along the light direction); generous on purpose so this coarse distance
+        // prefilter never excludes a section the frustum test itself would still accept.
+        float searchDistance = program.distance() * 4.0f;
         shadowRendering = true;
         try {
             if (!loggedShadowPass) {
                 loggedShadowPass = true;
-                LOGGER.info("Recording terrain shadow map ({}px, {} visible layers)",
-                    current.shadowFramebuffer().size(), invocation.passes.size());
+                LOGGER.info("Recording terrain shadow map ({}px, independently culled)",
+                    current.shadowFramebuffer().size());
             }
+            SortedRenderLists shadowLists = renderer.computeViewportRenderLists(viewport,
+                searchDistance);
             ChunkRenderMatrices matrices = new ChunkRenderMatrices(shadowView.projection(),
                 shadowView.modelView());
-            for (TerrainRenderPass pass : invocation.passes.values()) {
+            // Shadow maps conventionally skip translucent/water depth regardless, matching the
+            // main terrain pass's own historical translucent-skip for shadow replay.
+            for (TerrainRenderPass pass : List.of(DefaultTerrainRenderPasses.SOLID,
+                DefaultTerrainRenderPasses.CUTOUT)) {
+                // Required bracketing for drawing a render list that differs from a region's own
+                // primary-camera one -- see SodiumWorldRenderer.renderLayer(..., SortedRenderLists)
+                // on the Sodium fork for why: DefaultChunkRenderer caches a MultiDrawBatch per
+                // (region, pass) with no notion of which camera filled it, so without this the
+                // main camera's own next draw of a shared region could silently reuse the shadow
+                // camera's cached batch content instead of its own.
+                clearRegionBatches(shadowLists, pass);
                 renderer.renderLayer(matrices, pass, invocation.camera.x, invocation.camera.y,
-                    invocation.camera.z, invocation.fog, invocation.sampler);
+                    invocation.camera.z, FogParameters.NONE, invocation.sampler, shadowLists);
+                clearRegionBatches(shadowLists, pass);
             }
         } catch (RuntimeException e) {
             long failedGeneration = generation.incrementAndGet();
@@ -1338,6 +1373,13 @@ public final class ShaderRuntime {
             deactivate(failedGeneration);
         } finally {
             shadowRendering = false;
+        }
+    }
+
+    private static void clearRegionBatches(SortedRenderLists lists, TerrainRenderPass pass) {
+        var iterator = lists.iterator(false);
+        while (iterator.hasNext()) {
+            iterator.next().getRegion().clearCachedBatchFor(pass);
         }
     }
 
@@ -1638,7 +1680,7 @@ public final class ShaderRuntime {
         // convention so the shared Sodium draw path can keep GREATER depth tests.
         Matrix4f projection = new Matrix4f().setOrtho(-distance, distance, -distance, distance,
             distance * 4.0f, 0.05f, true);
-        return new ShadowView(projection, modelView);
+        return new ShadowView(projection, modelView, eye);
     }
 
     /** Writes and returns the current terrain UBO slice, or null while shaders are off. */
