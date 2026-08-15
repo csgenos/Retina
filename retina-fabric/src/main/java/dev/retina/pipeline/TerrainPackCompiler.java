@@ -754,10 +754,11 @@ public final class TerrainPackCompiler {
             for (BindingLayout.Binding binding : stage.bindings()) {
                 String resource = BindingLayout.canonicalName(binding.name());
                 if (!resource.matches("colortex(?:[0-9]|1[0-5])")
-                    && !resource.matches("shadowtex[01]|shadow|shadowcolor[01]")) {
+                    && !resource.matches("shadowtex[01]|shadow|shadowcolor[01]")
+                    && !resource.equals("normals") && !resource.equals("specular")) {
                     throw new CompilationException(program + " uses resource '" + resource
                         + "' (" + binding.glslType() + "); composite/final currently bind"
-                        + " colortex and shadow-map samplers only");
+                        + " colortex, shadow-map, and normals/specular samplers only");
                 }
                 String previous = samplers.putIfAbsent(resource, binding.glslType());
                 if (previous != null && !previous.equals(binding.glslType())) {
