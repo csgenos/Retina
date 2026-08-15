@@ -38,11 +38,26 @@ jobs:
       # release whose jar filename and in-game version string both disagree with its own tag.
       - name: Verify the tag matches the project version
         run: |
-          expected="$(grep '^retina.version=' gradle.properties | cut -d= -f2)+mc$(grep '^retina.minecraft=' gradle.properties | cut -d= -f2)"
+          retina_minecraft="$(grep '^retina.minecraft=' gradle.properties | cut -d= -f2)"
+          expected="$(grep '^retina.version=' gradle.properties | cut -d= -f2)+mc$retina_minecraft"
           if [ "${GITHUB_REF_NAME}" != "$expected" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} does not match the project version $expected" \
               "computed from gradle.properties (retina.version + retina.minecraft). Update" \
               "gradle.properties, commit, then re-tag with a tag matching the new version exactly."
+            exit 1
+          fi
+          # retina.minecraft (the version string retina-fabric/build.gradle.kts's version key
+          # uses, checked above) and minecraft.version (what it actually gives Loom to compile
+          # against and bakes into fabric.mod.json, retina-fabric/build.gradle.kts:12,97-107) are
+          # two separate properties with no enforced relationship. Bumping one without the other
+          # would publish a jar under a tag naming a Minecraft version it was neither built for
+          # nor declares as its dependency.
+          fabric_minecraft="$(grep '^minecraft.version=' gradle.properties | cut -d= -f2)"
+          if [ "$retina_minecraft" != "$fabric_minecraft" ]; then
+            echo "::error::gradle.properties has retina.minecraft=$retina_minecraft but" \
+              "minecraft.version=$fabric_minecraft. These must match: retina.minecraft names the" \
+              "version in the tag/jar filename, minecraft.version is what Loom actually compiles" \
+              "against and declares in fabric.mod.json. Update both together, commit, then re-tag."
             exit 1
           fi
 
